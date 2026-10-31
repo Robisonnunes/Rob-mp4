@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,9 +22,19 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk LeitorMP4.apk
 
       - name: Guardar o APK
         uses: actions/upload-artifact@v4
         with:
           name: LeitorMP4-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: LeitorMP4.apk
+
+      - name: Publicar em Releases (para descarregar no celular)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v1.0.${{ github.run_number }}" LeitorMP4.apk \
+            --repo "${{ github.repository }}" \
+            --title "Leitor MP4 v1.0.${{ github.run_number }}" \
+            --notes "Abra este link no celular e toque em LeitorMP4.apk para descarregar e instalar."
