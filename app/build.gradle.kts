@@ -11,15 +11,28 @@ android {
         applicationId = "com.robison.leitormp4"
         minSdk = 24          // Android 7.0 ou superior
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // Chave fixa: todas as versões têm a mesma assinatura, por isso
+    // instalam por cima da anterior sem perder as playlists.
+    signingConfigs {
+        create("fixa") {
+            storeFile = file("leitormp4.jks")
+            storePassword = "leitormp4"
+            keyAlias = "leitormp4"
+            keyPassword = "leitormp4"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Assinado com a chave de debug para poder instalar direto no celular
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("fixa")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("fixa")
         }
     }
 
