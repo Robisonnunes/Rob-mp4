@@ -54,6 +54,23 @@ class PlaylistStore(context: Context) {
         tmp.renameTo(file)
     }
 
+    /** Converte endereços antigos (content://...) para o caminho do ficheiro. */
+    fun migrate(aliases: Map<String, String>) {
+        var changed = false
+        for (p in playlists) {
+            for (i in p.items.indices) {
+                val new = aliases[p.items[i]] ?: continue
+                p.items[i] = new
+                changed = true
+            }
+            val dedup = p.items.distinct()
+            if (dedup.size != p.items.size) {
+                p.items.clear(); p.items.addAll(dedup); changed = true
+            }
+        }
+        if (changed) save()
+    }
+
     fun get(id: String?): Playlist? = playlists.firstOrNull { it.id == id }
 
     fun sorted(): List<Playlist> = playlists.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })

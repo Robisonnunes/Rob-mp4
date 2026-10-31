@@ -71,7 +71,7 @@ class RowAdapter(
                 val playing = t.id == currentId
                 holder.icon.setImageResource(if (playing) R.drawable.ic_equalizer else R.drawable.ic_music)
                 holder.title.text = t.title
-                holder.subtitle.text = listOf(t.folder, formatTime(t.durationMs))
+                holder.subtitle.text = listOf(t.folder, if (t.durationMs > 0) formatTime(t.durationMs) else "")
                     .filter { it.isNotBlank() }
                     .joinToString("  ·  ")
                 holder.subtitle.visibility = View.VISIBLE

@@ -6,8 +6,8 @@
     <string name="back">Voltar</string>
     <string name="search_hint">Procurar</string>
     <string name="refresh">Atualizar</string>
-    <string name="loading">A procurar ficheiros MP4…</string>
-    <string name="no_files">Nenhum ficheiro MP4 encontrado.\n\nCopie os MP4 para o celular (por exemplo, para a pasta Música ou Download) e toque em Atualizar.</string>
+    <string name="loading">A procurar músicas…</string>
+    <string name="no_files">Nenhum ficheiro de áudio encontrado.\n\nCopie os MP4 para o celular (por exemplo, para a pasta Música ou Download) e toque em Atualizar.</string>
     <string name="no_results">Nada encontrado.</string>
     <string name="no_permission">O app precisa de acesso aos ficheiros de mídia para encontrar os MP4.\n\nToque em Atualizar para dar a permissão, ou ative-a em Definições › Apps › Rob mp4 › Permissões.</string>
     <string name="playlist_empty">Esta playlist está vazia.\n\nPara acrescentar faixas, mantenha o dedo numa faixa ou numa pasta e escolha \"Adicionar à playlist\".</string>
@@ -37,4 +37,9 @@
     <string name="ok">OK</string>
     <string name="added_to_playlist">%1$d faixa(s) adicionada(s) a \"%2$s\"</string>
     <string name="already_in_playlist">Já estava tudo em \"%1$s\"</string>
+    <string name="full_access_row">Ver todas as pastas (WhatsApp, etc.)</string>
+    <string name="full_access_title">Ver todas as pastas?</string>
+    <string name="full_access_message">Algumas pastas, como as do WhatsApp (Music/WhatsApp), estão escondidas do catálogo de música do Android.\n\nPara o Rob mp4 as mostrar, ative \"Permitir acesso para gerir todos os ficheiros\" no ecrã seguinte e volte ao app.</string>
+    <string name="full_access_go">Ativar</string>
+    <string name="not_now">Agora não</string>
 </resources>

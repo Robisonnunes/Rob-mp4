@@ -3,55 +3,79 @@ package com.robison.leitormp4
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
+import java.io.File
 
 data class Track(
+    /** Identificador estável = caminho completo do ficheiro (usado nas playlists) */
+    val id: String,
     val uri: Uri,
     val title: String,
     val folder: String,
     val durationMs: Long,
-    /** Pasta completa onde o ficheiro está, ex.: /storage/emulated/0/Music/Viagem */
+    /** Pasta completa onde o ficheiro está, ex.: /storage/emulated/0/Music/WhatsApp */
     val dir: String
-) {
-    val id: String get() = uri.toString()
-}
+)
 
-/** Procura ficheiros MP4 (e M4A) na memória do celular através do MediaStore do Android. */
+class LoadResult(
+    val tracks: List<Track>,
+    /** Endereços antigos (content://...) -> caminho, para migrar playlists antigas */
+    val aliases: Map<String, String>
+)
+
 object TrackRepository {
+
+    /** Formatos de áudio que o app toca (o ExoPlayer suporta todos). */
+    val EXTENSIONS = setOf("mp4", "m4a", "mp3", "aac", "opus", "ogg", "oga", "wav", "flac", "amr", "3gp", "weba", "webm")
 
     @Suppress("DEPRECATION")
     private val DATA = MediaStore.MediaColumns.DATA
 
-    fun loadAll(context: Context): List<Track> {
-        val tracks = mutableListOf<Track>()
+    /**
+     * Com "acesso a todos os ficheiros", lê as pastas diretamente (vê também pastas com .nomedia,
+     * como as do WhatsApp). Sem esse acesso, usa o catálogo de mídia do Android (MediaStore).
+     */
+    fun loadAll(context: Context, fullAccess: Boolean): LoadResult {
+        val catalog = queryMediaStore(context)
+        val aliases = catalog.associate { it.uri.toString() to it.id }
 
-        // Ficheiros .mp4 com vídeo ficam catalogados como "vídeo" pelo Android
-        tracks += query(
-            context,
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-            selection = "${MediaStore.MediaColumns.MIME_TYPE} = ? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
-            args = arrayOf("video/mp4", "%.mp4")
+        val tracks = if (fullAccess) {
+            val durations = catalog.associate { it.id to it.durationMs }
+            scanFileSystem(context).map { f ->
+                val path = f.absolutePath
+                val dir = f.parent ?: "/"
+                Track(
+                    id = path,
+                    uri = Uri.fromFile(f),
+                    title = f.name.substringBeforeLast('.'),
+                    folder = dir.substringAfterLast('/'),
+                    durationMs = durations[path] ?: 0L,
+                    dir = dir
+                )
+            }
+        } else {
+            catalog
+        }
+
+        return LoadResult(
+            tracks.distinctBy { it.id }
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }),
+            aliases
         )
-
-        // Ficheiros .mp4 / .m4a só com áudio ficam catalogados como "áudio"
-        tracks += query(
-            context,
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-            selection = "${MediaStore.MediaColumns.MIME_TYPE} = ? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
-            args = arrayOf("audio/mp4", "%.mp4")
-        )
-
-        return tracks
-            .distinctBy { it.uri }
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
     }
 
-    private fun query(
-        context: Context,
-        collection: Uri,
-        selection: String,
-        args: Array<String>
-    ): List<Track> {
+    // ------------------------------------------------------------------ MediaStore
+
+    private fun queryMediaStore(context: Context): List<Track> {
+        val likes = EXTENSIONS.joinToString(" OR ") { "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?" }
+        val args = EXTENSIONS.map { "%.$it" }.toTypedArray()
+        return query(context, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, likes, args) +
+            query(context, MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, likes, args)
+    }
+
+    private fun query(context: Context, collection: Uri, selection: String, args: Array<String>): List<Track> {
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
@@ -66,13 +90,13 @@ object TrackRepository {
                 val iDur = c.getColumnIndex(MediaStore.MediaColumns.DURATION)
                 val iData = c.getColumnIndex(DATA)
                 while (c.moveToNext()) {
-                    val id = c.getLong(iId)
                     val name = c.getString(iName) ?: continue
-                    val path = if (iData >= 0) c.getString(iData) else null
-                    val dir = path?.substringBeforeLast('/', "")?.takeIf { it.isNotEmpty() }
-                        ?: "/Outros"
+                    val uri = ContentUris.withAppendedId(collection, c.getLong(iId))
+                    val path = (if (iData >= 0) c.getString(iData) else null) ?: uri.toString()
+                    val dir = path.substringBeforeLast('/', "").ifEmpty { "/Outros" }
                     result += Track(
-                        uri = ContentUris.withAppendedId(collection, id),
+                        id = path,
+                        uri = uri,
                         title = name.substringBeforeLast('.'),
                         folder = dir.substringAfterLast('/'),
                         durationMs = if (iDur >= 0) c.getLong(iDur) else 0L,
@@ -81,11 +105,54 @@ object TrackRepository {
                 }
             }
         } catch (_: SecurityException) {
-            // Sem permissão para esta categoria — ignora
         } catch (_: IllegalArgumentException) {
-            // Coluna inexistente nalguma versão do Android — ignora
         }
         return result
+    }
+
+    // ------------------------------------------------------------------ pastas diretamente
+
+    /** Raízes: memória interna + cartões SD. */
+    fun storageRoots(context: Context): List<File> {
+        val roots = linkedSetOf<String>()
+        @Suppress("DEPRECATION")
+        roots += Environment.getExternalStorageDirectory().absolutePath
+        context.getExternalFilesDirs(null).filterNotNull().forEach { f ->
+            roots += f.absolutePath.substringBefore("/Android/")
+        }
+        return roots.map { File(it) }.filter { it.canRead() }
+    }
+
+    private fun scanFileSystem(context: Context): List<File> {
+        val found = mutableListOf<File>()
+        val stack = ArrayDeque<Pair<File, Int>>()
+        storageRoots(context).forEach { stack.addLast(it to 0) }
+        while (stack.isNotEmpty() && found.size < 50_000) {
+            val (dir, depth) = stack.removeLast()
+            val children = dir.listFiles() ?: continue
+            for (f in children) {
+                val name = f.name
+                if (f.isDirectory) {
+                    if (name.startsWith(".")) continue                       // pastas ocultas (miniaturas, estados…)
+                    if (depth == 0 && name == "Android") {
+                        // Só Android/media é acessível (é onde fica o WhatsApp nos celulares recentes)
+                        File(f, "media").takeIf { it.isDirectory }?.let { stack.addLast(it to depth + 2) }
+                        continue
+                    }
+                    if (depth < 15) stack.addLast(f to depth + 1)
+                } else if (name.substringAfterLast('.', "").lowercase() in EXTENSIONS) {
+                    found += f
+                }
+            }
+        }
+        return found
+    }
+
+    /** O app pode ler todas as pastas? */
+    fun hasFullAccess(context: Context): Boolean = when {
+        Build.VERSION.SDK_INT >= 30 -> Environment.isExternalStorageManager()
+        else -> context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 }
 
@@ -98,12 +165,13 @@ object FolderTree {
         return when {
             parts.size >= 3 && parts[0] == "storage" && parts[1] == "emulated" -> "/storage/emulated/${parts[2]}"
             parts.size >= 2 && parts[0] == "storage" -> "/storage/${parts[1]}"
+            parts.size >= 2 && parts[0] == "sdcard" -> "/sdcard"
             else -> "/" + parts.first()
         }
     }
 
     fun displayName(path: String): String = when {
-        path == "/storage/emulated/0" -> "Memória interna"
+        path == "/storage/emulated/0" || path == "/sdcard" -> "Memória interna"
         path.startsWith("/storage/emulated/") && path.count { it == '/' } == 3 -> "Memória interna (outro utilizador)"
         Regex("^/storage/[^/]+$").matches(path) -> "Cartão SD"
         else -> path.substringAfterLast('/')
@@ -113,7 +181,7 @@ object FolderTree {
 
     data class Child(val path: String, val name: String, val count: Int)
 
-    /** Subpastas diretas de [folder] que têm MP4 (nelas ou mais abaixo), com a contagem de faixas. */
+    /** Subpastas diretas de [folder] que têm áudio (nelas ou mais abaixo), com a contagem de faixas. */
     fun subfolders(tracks: List<Track>, folder: String): List<Child> {
         val counts = linkedMapOf<String, Int>()
         val prefix = "$folder/"

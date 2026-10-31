@@ -4,7 +4,10 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.os.Build
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
@@ -66,6 +69,7 @@ class MainActivity : AppCompatActivity() {
     private var folderPath: String? = null
     private var openPlaylistId: String? = null
     private var visibleTracks: List<Track> = emptyList()
+    private var loadedWithFullAccess: Boolean? = null
 
     // Leitor
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -78,6 +82,7 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             loadTracks()
+            offerFullAccessOnce()
         }
 
     private val playerListener = object : Player.Listener {
@@ -172,6 +177,13 @@ class MainActivity : AppCompatActivity() {
         if (hasMediaPermission()) loadTracks() else requestPermissions()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Voltou das definições depois de dar (ou tirar) o acesso a todas as pastas
+        val full = TrackRepository.hasFullAccess(this)
+        if (loadedWithFullAccess != null && loadedWithFullAccess != full) loadTracks()
+    }
+
     override fun onStart() {
         super.onStart()
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
@@ -215,6 +227,7 @@ class MainActivity : AppCompatActivity() {
     // ================================================================ permissões
 
     private fun hasMediaPermission(): Boolean {
+        if (TrackRepository.hasFullAccess(this)) return true
         fun granted(p: String) =
             ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
         return if (Build.VERSION.SDK_INT >= 33) {
@@ -240,6 +253,38 @@ class MainActivity : AppCompatActivity() {
         permissionLauncher.launch(perms)
     }
 
+    // ================================================================ acesso a todas as pastas
+
+    /** No Android 11+ é preciso "acesso a todos os ficheiros" para ver pastas como as do WhatsApp. */
+    private fun needsFullAccess() =
+        Build.VERSION.SDK_INT >= 30 && !TrackRepository.hasFullAccess(this)
+
+    private fun offerFullAccessOnce() {
+        if (!needsFullAccess()) return
+        val prefs = getSharedPreferences("app", MODE_PRIVATE)
+        if (prefs.getBoolean("asked_full_access", false)) return
+        prefs.edit().putBoolean("asked_full_access", true).apply()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.full_access_title)
+            .setMessage(R.string.full_access_message)
+            .setPositiveButton(R.string.full_access_go) { _, _ -> openFullAccessSettings() }
+            .setNegativeButton(R.string.not_now, null)
+            .show()
+    }
+
+    private fun openFullAccessSettings() {
+        if (Build.VERSION.SDK_INT < 30) return
+        val intent = Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:$packageName")
+        )
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+    }
+
     // ================================================================ dados
 
     private fun loadTracks() {
@@ -248,9 +293,13 @@ class MainActivity : AppCompatActivity() {
             return
         }
         showEmpty(getString(R.string.loading))
+        val full = TrackRepository.hasFullAccess(this)
         io.execute {
-            val tracks = TrackRepository.loadAll(applicationContext)
+            val result = TrackRepository.loadAll(applicationContext, full)
+            val tracks = result.tracks
             runOnUiThread {
+                loadedWithFullAccess = full
+                store.migrate(result.aliases)
                 allTracks = tracks
                 tracksById = tracks.associateBy { it.id }
                 volumes = tracks.map { FolderTree.volumeOf(it.dir) }.distinct().sorted()
@@ -311,6 +360,9 @@ class MainActivity : AppCompatActivity() {
         when (currentTab) {
             Tab.FOLDERS -> {
                 val f = effectiveFolder()
+                if (needsFullAccess() && !canGoUp() && q.isEmpty()) {
+                    rows += Row.Action(ACT_FULL_ACCESS, getString(R.string.full_access_row), R.drawable.ic_lock_open)
+                }
                 if (f == null) {
                     volumes.forEach { v ->
                         rows += Row.FolderRow(v, FolderTree.displayName(v), tracksInFolder(v).size)
@@ -398,6 +450,7 @@ class MainActivity : AppCompatActivity() {
                 ACT_SHUFFLE_FOLDER -> effectiveFolder()?.let { playQueue(tracksInFolder(it), 0, shuffle = true) }
                 ACT_PLAY_PLAYLIST -> store.get(openPlaylistId)?.let { playQueue(tracksOf(it), 0) }
                 ACT_SHUFFLE_PLAYLIST -> store.get(openPlaylistId)?.let { playQueue(tracksOf(it), 0, shuffle = true) }
+                ACT_FULL_ACCESS -> openFullAccessSettings()
                 ACT_NEW_PLAYLIST -> askName(getString(R.string.new_playlist), "") { name ->
                     store.create(name)
                     render()
@@ -608,5 +661,6 @@ class MainActivity : AppCompatActivity() {
         private const val ACT_NEW_PLAYLIST = 3
         private const val ACT_PLAY_PLAYLIST = 4
         private const val ACT_SHUFFLE_PLAYLIST = 5
+        private const val ACT_FULL_ACCESS = 6
     }
 }
