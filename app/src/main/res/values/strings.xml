@@ -48,4 +48,11 @@
     <string name="rename_failed">Não foi possível mudar o nome deste ficheiro.</string>
     <string name="renamed">Nome alterado</string>
     <string name="rename_needs_access">Para mudar o nome dos ficheiros, o Rob mp4 precisa de \"Permitir acesso para gerir todos os ficheiros\". Ative no ecrã seguinte e volte ao app.</string>
+    <string name="favorites">Favoritos</string>
+    <string name="favorites_row">Favoritos (%1$d)</string>
+    <string name="favorite">☆ Adicionar aos favoritos</string>
+    <string name="unfavorite">★ Remover dos favoritos</string>
+    <string name="play_favorites">Tocar faixas favoritas</string>
+    <string name="shuffle_favorites">Tocar favoritas em aleatório</string>
+    <string name="favorites_empty">Ainda não tem favoritos.\n\nMantenha o dedo numa faixa ou numa pasta e escolha \"Adicionar aos favoritos\".</string>
 </resources>

@@ -63,7 +63,9 @@ class MainActivity : AppCompatActivity() {
 
     // Estado
     private lateinit var store: PlaylistStore
-    private val adapter = RowAdapter(::onRowClick, ::onRowLongClick)
+    private lateinit var favs: Favorites
+    private var showFavorites = false
+    private val adapter = RowAdapter(::onRowClick, ::onRowLongClick, ::isFavorite)
     private var allTracks: List<Track> = emptyList()
     private var tracksById: Map<String, Track> = emptyMap()
     private var volumes: List<String> = emptyList()
@@ -108,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         store = PlaylistStore(this)
+        favs = Favorites(this)
 
         tabs = findViewById(R.id.tabs)
         navBar = findViewById(R.id.navBar)
@@ -141,6 +144,7 @@ class MainActivity : AppCompatActivity() {
                 // Tocar de novo no separador volta ao início dele
                 folderPath = null
                 openPlaylistId = null
+                showFavorites = false
                 clearSearchAndRender()
             }
         })
@@ -320,6 +324,16 @@ class MainActivity : AppCompatActivity() {
         allTracks.filter { FolderTree.isInside(it.dir, path) }
             .sortedWith(compareBy<Track>({ it.dir.lowercase() }, { it.title.lowercase() }))
 
+    private fun favoriteTracks(): List<Track> =
+        favs.trackIds().mapNotNull { tracksById[it] }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+
+    private fun isFavorite(row: Row): Boolean = when (row) {
+        is Row.TrackRow -> favs.isTrack(row.track.id)
+        is Row.FolderRow -> favs.isFolder(row.path)
+        else -> false
+    }
+
     private fun tracksOf(p: Playlist): List<Track> = p.items.mapNotNull { tracksById[it] }
 
     // ================================================================ navegação
@@ -331,7 +345,7 @@ class MainActivity : AppCompatActivity() {
     private fun canGoUp(): Boolean = when (currentTab) {
         Tab.FOLDERS -> {
             val f = effectiveFolder()
-            f != null && !(f in volumes && volumes.size == 1)
+            showFavorites || (f != null && !(f in volumes && volumes.size == 1))
         }
         Tab.PLAYLISTS -> openPlaylistId != null
     }
@@ -339,8 +353,12 @@ class MainActivity : AppCompatActivity() {
     private fun goUp() {
         when (currentTab) {
             Tab.FOLDERS -> {
-                val f = effectiveFolder() ?: return
-                folderPath = if (f in volumes) null else f.substringBeforeLast('/')
+                if (showFavorites) {
+                    showFavorites = false
+                } else {
+                    val f = effectiveFolder() ?: return
+                    folderPath = if (f in volumes) null else f.substringBeforeLast('/')
+                }
             }
             Tab.PLAYLISTS -> openPlaylistId = null
         }
@@ -363,10 +381,28 @@ class MainActivity : AppCompatActivity() {
         var title: String? = null
 
         when (currentTab) {
-            Tab.FOLDERS -> {
+            Tab.FOLDERS -> if (showFavorites) {
+                title = getString(R.string.favorites)
+                val favTracks = favoriteTracks()
+                if (favTracks.isNotEmpty() && q.isEmpty()) {
+                    rows += Row.Action(ACT_PLAY_FAVS, getString(R.string.play_favorites), R.drawable.ic_play)
+                    rows += Row.Action(ACT_SHUFFLE_FAVS, getString(R.string.shuffle_favorites), R.drawable.ic_shuffle)
+                }
+                favs.folderPaths()
+                    .map { it to tracksInFolder(it).size }
+                    .filter { (path, n) -> n > 0 && match(path.substringAfterLast('/')) }
+                    .sortedBy { it.first.substringAfterLast('/').lowercase() }
+                    .forEach { (path, n) -> rows += Row.FolderRow(path, FolderTree.displayName(path), n) }
+                favTracks.filter { match(it.title) }.forEach { rows += Row.TrackRow(it) }
+            } else {
                 val f = effectiveFolder()
                 if (needsFullAccess() && !canGoUp() && q.isEmpty()) {
                     rows += Row.Action(ACT_FULL_ACCESS, getString(R.string.full_access_row), R.drawable.ic_lock_open)
+                }
+                if (!canGoUp() && q.isEmpty()) {
+                    val n = favs.folderPaths().count { p -> allTracks.any { FolderTree.isInside(it.dir, p) } } +
+                        favoriteTracks().size
+                    rows += Row.Action(ACT_FAVORITES, getString(R.string.favorites_row, n), R.drawable.ic_star)
                 }
                 if (f == null) {
                     volumes.forEach { v ->
@@ -423,6 +459,7 @@ class MainActivity : AppCompatActivity() {
             rows.isNotEmpty() -> null
             q.isNotEmpty() -> getString(R.string.no_results)
             currentTab == Tab.PLAYLISTS && openPlaylistId != null -> getString(R.string.playlist_empty)
+            currentTab == Tab.FOLDERS && showFavorites -> getString(R.string.favorites_empty)
             allTracks.isEmpty() -> getString(R.string.no_files)
             else -> getString(R.string.no_results)
         }
@@ -444,6 +481,7 @@ class MainActivity : AppCompatActivity() {
             }
             is Row.FolderRow -> {
                 folderPath = row.path
+                showFavorites = false
                 clearSearchAndRender()
             }
             is Row.PlaylistRow -> {
@@ -456,6 +494,12 @@ class MainActivity : AppCompatActivity() {
                 ACT_PLAY_PLAYLIST -> store.get(openPlaylistId)?.let { playQueue(tracksOf(it), 0) }
                 ACT_SHUFFLE_PLAYLIST -> store.get(openPlaylistId)?.let { playQueue(tracksOf(it), 0, shuffle = true) }
                 ACT_FULL_ACCESS -> openFullAccessSettings()
+                ACT_FAVORITES -> {
+                    showFavorites = true
+                    clearSearchAndRender()
+                }
+                ACT_PLAY_FAVS -> playQueue(favoriteTracks(), 0)
+                ACT_SHUFFLE_FAVS -> playQueue(favoriteTracks(), 0, shuffle = true)
                 ACT_NEW_PLAYLIST -> askName(getString(R.string.new_playlist), "") { name ->
                     store.create(name)
                     render()
@@ -477,6 +521,9 @@ class MainActivity : AppCompatActivity() {
         val playlist = if (currentTab == Tab.PLAYLISTS) store.get(openPlaylistId) else null
         val options = mutableListOf<Pair<String, () -> Unit>>()
         options += getString(R.string.add_to_playlist) to { chooseplaylist(listOf(track.id)) }
+        options += getString(
+            if (favs.isTrack(track.id)) R.string.unfavorite else R.string.favorite
+        ) to { favs.toggleTrack(track.id); render() }
         options += getString(R.string.rename_file) to { renameTrack(track) }
         if (playlist != null) {
             options += getString(R.string.move_up) to { store.move(playlist.id, track.id, -1); render() }
@@ -495,7 +542,10 @@ class MainActivity : AppCompatActivity() {
             listOf(
                 getString(R.string.play_folder) to { playQueue(tracks, 0) },
                 getString(R.string.shuffle_folder) to { playQueue(tracks, 0, shuffle = true) },
-                getString(R.string.add_folder_to_playlist) to { chooseplaylist(tracks.map { it.id }) }
+                getString(R.string.add_folder_to_playlist) to { chooseplaylist(tracks.map { it.id }) },
+                getString(
+                    if (favs.isFolder(row.path)) R.string.unfavorite else R.string.favorite
+                ) to { favs.toggleFolder(row.path); render() }
             )
         )
     }
@@ -624,6 +674,7 @@ class MainActivity : AppCompatActivity() {
                     val oldPath = file.absolutePath
                     val newPath = target.absolutePath
                     store.renamePath(oldPath, newPath)
+                    favs.renamePath(oldPath, newPath)
                     updateQueueAfterRename(oldPath, target)
                     MediaScannerConnection.scanFile(this, arrayOf(oldPath, newPath), null, null)
                     toast(getString(R.string.renamed))
@@ -742,5 +793,8 @@ class MainActivity : AppCompatActivity() {
         private const val ACT_PLAY_PLAYLIST = 4
         private const val ACT_SHUFFLE_PLAYLIST = 5
         private const val ACT_FULL_ACCESS = 6
+        private const val ACT_FAVORITES = 7
+        private const val ACT_PLAY_FAVS = 8
+        private const val ACT_SHUFFLE_FAVS = 9
     }
 }
