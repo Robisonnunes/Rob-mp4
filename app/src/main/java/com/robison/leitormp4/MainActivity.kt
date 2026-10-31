@@ -7,14 +7,19 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.widget.doAfterTextChanged
@@ -25,11 +30,19 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.tabs.TabLayout
 import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
+    private enum class Tab { TRACKS, FOLDERS, PLAYLISTS }
+
+    // Vistas
+    private lateinit var tabs: TabLayout
+    private lateinit var navBar: View
+    private lateinit var navBack: ImageButton
+    private lateinit var navTitle: TextView
     private lateinit var search: EditText
     private lateinit var emptyView: TextView
     private lateinit var list: RecyclerView
@@ -43,10 +56,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnShuffle: ImageButton
     private lateinit var btnRepeat: ImageButton
 
-    private val adapter = TrackAdapter { position -> playFromList(position) }
+    // Estado
+    private lateinit var store: PlaylistStore
+    private val adapter = RowAdapter(::onRowClick, ::onRowLongClick)
     private var allTracks: List<Track> = emptyList()
-    private var shownTracks: List<Track> = emptyList()
+    private var tracksById: Map<String, Track> = emptyMap()
+    private var volumes: List<String> = emptyList()
+    private var currentTab = Tab.TRACKS
+    private var folderPath: String? = null
+    private var openPlaylistId: String? = null
+    private var visibleTracks: List<Track> = emptyList()
 
+    // Leitor
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
 
@@ -60,7 +81,7 @@ class MainActivity : AppCompatActivity() {
         }
 
     private val playerListener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) = updateUi()
+        override fun onEvents(player: Player, events: Player.Events) = updatePlayerUi()
     }
 
     private val progressTicker = object : Runnable {
@@ -70,12 +91,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ---------------------------------------------------------------- ciclo de vida
+    private val backCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() = goUp()
+    }
+
+    // ================================================================ ciclo de vida
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        store = PlaylistStore(this)
 
+        tabs = findViewById(R.id.tabs)
+        navBar = findViewById(R.id.navBar)
+        navBack = findViewById(R.id.navBack)
+        navTitle = findViewById(R.id.navTitle)
         search = findViewById(R.id.search)
         emptyView = findViewById(R.id.emptyView)
         list = findViewById(R.id.trackList)
@@ -92,7 +122,26 @@ class MainActivity : AppCompatActivity() {
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
-        search.doAfterTextChanged { applyFilter() }
+        tabs.addTab(tabs.newTab().setText(R.string.tab_tracks))
+        tabs.addTab(tabs.newTab().setText(R.string.tab_folders))
+        tabs.addTab(tabs.newTab().setText(R.string.tab_playlists))
+        tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(t: TabLayout.Tab) {
+                currentTab = Tab.entries[t.position]
+                clearSearchAndRender()
+            }
+            override fun onTabUnselected(t: TabLayout.Tab) {}
+            override fun onTabReselected(t: TabLayout.Tab) {
+                // Tocar de novo no separador volta ao início dele
+                folderPath = null
+                openPlaylistId = null
+                clearSearchAndRender()
+            }
+        })
+
+        navBack.setOnClickListener { goUp() }
+        onBackPressedDispatcher.addCallback(this, backCallback)
+        search.doAfterTextChanged { render() }
 
         btnPlay.setOnClickListener { togglePlay() }
         btnNext.setOnClickListener { controller?.seekToNextMediaItem() }
@@ -131,7 +180,7 @@ class MainActivity : AppCompatActivity() {
         controllerFuture = future
         future.addListener({
             controller = future.get().also { it.addListener(playerListener) }
-            updateUi()
+            updatePlayerUi()
         }, ContextCompat.getMainExecutor(this))
         handler.post(progressTicker)
     }
@@ -164,7 +213,7 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    // ---------------------------------------------------------------- permissões
+    // ================================================================ permissões
 
     private fun hasMediaPermission(): Boolean {
         fun granted(p: String) =
@@ -192,35 +241,141 @@ class MainActivity : AppCompatActivity() {
         permissionLauncher.launch(perms)
     }
 
-    // ---------------------------------------------------------------- lista
+    // ================================================================ dados
 
     private fun loadTracks() {
         if (!hasMediaPermission()) {
             showEmpty(getString(R.string.no_permission))
             return
         }
-        emptyView.text = getString(R.string.loading)
-        emptyView.visibility = View.VISIBLE
+        showEmpty(getString(R.string.loading))
         io.execute {
             val tracks = TrackRepository.loadAll(applicationContext)
             runOnUiThread {
                 allTracks = tracks
-                applyFilter()
+                tracksById = tracks.associateBy { it.id }
+                volumes = tracks.map { FolderTree.volumeOf(it.dir) }.distinct().sorted()
+                if (folderPath != null && allTracks.none { FolderTree.isInside(it.dir, folderPath!!) }) {
+                    folderPath = null
+                }
+                render()
             }
         }
     }
 
-    private fun applyFilter() {
+    private fun tracksInFolder(path: String): List<Track> =
+        allTracks.filter { FolderTree.isInside(it.dir, path) }
+            .sortedWith(compareBy<Track>({ it.dir.lowercase() }, { it.title.lowercase() }))
+
+    private fun tracksOf(p: Playlist): List<Track> = p.items.mapNotNull { tracksById[it] }
+
+    // ================================================================ navegação
+
+    /** Pasta mostrada no separador Pastas; com um só armazenamento, começa logo nele. */
+    private fun effectiveFolder(): String? =
+        folderPath ?: volumes.singleOrNull()
+
+    private fun canGoUp(): Boolean = when (currentTab) {
+        Tab.TRACKS -> false
+        Tab.FOLDERS -> {
+            val f = effectiveFolder()
+            f != null && !(f in volumes && volumes.size == 1)
+        }
+        Tab.PLAYLISTS -> openPlaylistId != null
+    }
+
+    private fun goUp() {
+        when (currentTab) {
+            Tab.FOLDERS -> {
+                val f = effectiveFolder() ?: return
+                folderPath = if (f in volumes) null else f.substringBeforeLast('/')
+            }
+            Tab.PLAYLISTS -> openPlaylistId = null
+            Tab.TRACKS -> return
+        }
+        clearSearchAndRender()
+    }
+
+    private fun clearSearchAndRender() {
+        if (search.text.isNotEmpty()) search.setText("") // dispara render()
+        else render()
+        list.scrollToPosition(0)
+    }
+
+    // ================================================================ desenhar a lista
+
+    private fun render() {
         val q = search.text.toString().trim()
-        shownTracks = if (q.isEmpty()) allTracks else allTracks.filter {
-            it.title.contains(q, ignoreCase = true) || it.folder.contains(q, ignoreCase = true)
+        fun match(s: String) = q.isEmpty() || s.contains(q, ignoreCase = true)
+
+        val rows = mutableListOf<Row>()
+        var title: String? = null
+
+        when (currentTab) {
+            Tab.TRACKS -> {
+                allTracks.filter { match(it.title) || match(it.folder) }
+                    .forEach { rows += Row.TrackRow(it) }
+            }
+
+            Tab.FOLDERS -> {
+                val f = effectiveFolder()
+                if (f == null) {
+                    volumes.forEach { v ->
+                        rows += Row.FolderRow(v, FolderTree.displayName(v), tracksInFolder(v).size)
+                    }
+                } else {
+                    title = FolderTree.displayName(f)
+                    val inside = tracksInFolder(f)
+                    if (inside.isNotEmpty() && q.isEmpty()) {
+                        rows += Row.Action(ACT_PLAY_FOLDER, getString(R.string.play_folder), R.drawable.ic_play)
+                        rows += Row.Action(ACT_SHUFFLE_FOLDER, getString(R.string.shuffle_folder), R.drawable.ic_shuffle)
+                    }
+                    FolderTree.subfolders(allTracks, f).filter { match(it.name) }
+                        .forEach { rows += Row.FolderRow(it.path, it.name, it.count) }
+                    allTracks.filter { it.dir == f && match(it.title) }
+                        .forEach { rows += Row.TrackRow(it) }
+                }
+            }
+
+            Tab.PLAYLISTS -> {
+                val p = store.get(openPlaylistId)
+                if (p == null) {
+                    openPlaylistId = null
+                    if (q.isEmpty()) {
+                        rows += Row.Action(ACT_NEW_PLAYLIST, getString(R.string.new_playlist), R.drawable.ic_add)
+                    }
+                    store.sorted().filter { match(it.name) }
+                        .forEach { rows += Row.PlaylistRow(it, tracksOf(it).size) }
+                } else {
+                    title = p.name
+                    val tracks = tracksOf(p)
+                    if (tracks.isNotEmpty() && q.isEmpty()) {
+                        rows += Row.Action(ACT_PLAY_PLAYLIST, getString(R.string.play_playlist), R.drawable.ic_play)
+                        rows += Row.Action(ACT_SHUFFLE_PLAYLIST, getString(R.string.shuffle_playlist), R.drawable.ic_shuffle)
+                    }
+                    tracks.filter { match(it.title) }.forEach { rows += Row.TrackRow(it) }
+                }
+            }
         }
-        adapter.submit(shownTracks)
-        when {
-            allTracks.isEmpty() -> showEmpty(getString(R.string.no_files))
-            shownTracks.isEmpty() -> showEmpty(getString(R.string.no_results))
-            else -> emptyView.visibility = View.GONE
+
+        visibleTracks = rows.filterIsInstance<Row.TrackRow>().map { it.track }
+        adapter.submit(rows)
+        adapter.setCurrent(controller?.currentMediaItem?.mediaId)
+
+        navBar.visibility = if (title != null) View.VISIBLE else View.GONE
+        navTitle.text = title
+        navBack.visibility = if (canGoUp()) View.VISIBLE else View.INVISIBLE
+        backCallback.isEnabled = canGoUp()
+
+        val empty = when {
+            !hasMediaPermission() -> getString(R.string.no_permission)
+            rows.isNotEmpty() -> null
+            q.isNotEmpty() -> getString(R.string.no_results)
+            currentTab == Tab.PLAYLISTS && openPlaylistId != null -> getString(R.string.playlist_empty)
+            allTracks.isEmpty() -> getString(R.string.no_files)
+            else -> getString(R.string.no_results)
         }
+        if (empty == null) emptyView.visibility = View.GONE else showEmpty(empty)
     }
 
     private fun showEmpty(msg: String) {
@@ -228,13 +383,157 @@ class MainActivity : AppCompatActivity() {
         emptyView.visibility = View.VISIBLE
     }
 
-    // ---------------------------------------------------------------- reprodução
+    // ================================================================ toques na lista
 
-    /** Toca a faixa escolhida e coloca a lista visível como fila (para "próxima" funcionar). */
-    private fun playFromList(position: Int) {
+    private fun onRowClick(row: Row) {
+        when (row) {
+            is Row.TrackRow -> {
+                val i = visibleTracks.indexOfFirst { it.id == row.track.id }
+                playQueue(visibleTracks, i.coerceAtLeast(0))
+            }
+            is Row.FolderRow -> {
+                folderPath = row.path
+                clearSearchAndRender()
+            }
+            is Row.PlaylistRow -> {
+                openPlaylistId = row.playlist.id
+                clearSearchAndRender()
+            }
+            is Row.Action -> when (row.action) {
+                ACT_PLAY_FOLDER -> effectiveFolder()?.let { playQueue(tracksInFolder(it), 0) }
+                ACT_SHUFFLE_FOLDER -> effectiveFolder()?.let { playQueue(tracksInFolder(it), 0, shuffle = true) }
+                ACT_PLAY_PLAYLIST -> store.get(openPlaylistId)?.let { playQueue(tracksOf(it), 0) }
+                ACT_SHUFFLE_PLAYLIST -> store.get(openPlaylistId)?.let { playQueue(tracksOf(it), 0, shuffle = true) }
+                ACT_NEW_PLAYLIST -> askName(getString(R.string.new_playlist), "") { name ->
+                    store.create(name)
+                    render()
+                }
+            }
+        }
+    }
+
+    private fun onRowLongClick(row: Row) {
+        when (row) {
+            is Row.TrackRow -> trackMenu(row.track)
+            is Row.FolderRow -> folderMenu(row)
+            is Row.PlaylistRow -> playlistMenu(row.playlist)
+            is Row.Action -> Unit
+        }
+    }
+
+    private fun trackMenu(track: Track) {
+        val playlist = if (currentTab == Tab.PLAYLISTS) store.get(openPlaylistId) else null
+        val options = mutableListOf<Pair<String, () -> Unit>>()
+        options += getString(R.string.add_to_playlist) to { chooseplaylist(listOf(track.id)) }
+        if (playlist != null) {
+            options += getString(R.string.move_up) to { store.move(playlist.id, track.id, -1); render() }
+            options += getString(R.string.move_down) to { store.move(playlist.id, track.id, +1); render() }
+            options += getString(R.string.remove_from_playlist) to {
+                store.remove(playlist.id, track.id); render()
+            }
+        }
+        showOptions(track.title, options)
+    }
+
+    private fun folderMenu(row: Row.FolderRow) {
+        val tracks = tracksInFolder(row.path)
+        showOptions(
+            row.name,
+            listOf(
+                getString(R.string.play_folder) to { playQueue(tracks, 0) },
+                getString(R.string.shuffle_folder) to { playQueue(tracks, 0, shuffle = true) },
+                getString(R.string.add_folder_to_playlist) to { chooseplaylist(tracks.map { it.id }) }
+            )
+        )
+    }
+
+    private fun playlistMenu(p: Playlist) {
+        showOptions(
+            p.name,
+            listOf(
+                getString(R.string.play_playlist) to { playQueue(tracksOf(p), 0) },
+                getString(R.string.shuffle_playlist) to { playQueue(tracksOf(p), 0, shuffle = true) },
+                getString(R.string.rename) to {
+                    askName(getString(R.string.rename), p.name) { store.rename(p.id, it); render() }
+                },
+                getString(R.string.delete) to {
+                    AlertDialog.Builder(this)
+                        .setTitle(getString(R.string.delete_confirm, p.name))
+                        .setPositiveButton(R.string.delete) { _, _ -> store.delete(p.id); render() }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                    Unit
+                }
+            )
+        )
+    }
+
+    /** Escolher (ou criar) a playlist onde acrescentar faixas. */
+    private fun chooseplaylist(trackIds: List<String>) {
+        if (trackIds.isEmpty()) return
+        val playlists = store.sorted()
+        val names = playlists.map { it.name } + getString(R.string.new_playlist_option)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.add_to_playlist)
+            .setItems(names.toTypedArray()) { _, which ->
+                if (which < playlists.size) {
+                    addTo(playlists[which], trackIds)
+                } else {
+                    askName(getString(R.string.new_playlist), "") { name ->
+                        addTo(store.create(name), trackIds)
+                    }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun addTo(p: Playlist, trackIds: List<String>) {
+        val added = store.add(p.id, trackIds)
+        val msg = if (added == 0) getString(R.string.already_in_playlist, p.name)
+        else getString(R.string.added_to_playlist, added, p.name)
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        render()
+    }
+
+    private fun showOptions(title: String, options: List<Pair<String, () -> Unit>>) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(options.map { it.first }.toTypedArray()) { _, which -> options[which].second() }
+            .show()
+    }
+
+    private fun askName(title: String, initial: String, onOk: (String) -> Unit) {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setText(initial)
+            setSelection(initial.length)
+            hint = getString(R.string.playlist_name_hint)
+        }
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val box = FrameLayout(this).apply {
+            setPadding(pad, pad / 2, pad, 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(box)
+            .setPositiveButton(R.string.ok) { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) onOk(name)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    // ================================================================ reprodução
+
+    private fun playQueue(tracks: List<Track>, startIndex: Int, shuffle: Boolean = false) {
         val c = controller ?: return
-        if (position !in shownTracks.indices) return
-        c.setMediaItems(shownTracks.map { it.toMediaItem() }, position, 0L)
+        if (tracks.isEmpty()) return
+        c.shuffleModeEnabled = shuffle
+        val start = if (shuffle) tracks.indices.random() else startIndex.coerceIn(tracks.indices)
+        c.setMediaItems(tracks.map { it.toMediaItem() }, start, 0L)
         c.prepare()
         c.play()
     }
@@ -242,7 +541,7 @@ class MainActivity : AppCompatActivity() {
     private fun togglePlay() {
         val c = controller ?: return
         if (c.mediaItemCount == 0) {
-            if (shownTracks.isNotEmpty()) playFromList(0)
+            if (visibleTracks.isNotEmpty()) playQueue(visibleTracks, 0)
             return
         }
         if (c.isPlaying) {
@@ -256,7 +555,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun Track.toMediaItem(): MediaItem =
         MediaItem.Builder()
-            .setMediaId(uri.toString())
+            .setMediaId(id)
             .setUri(uri)
             .setRequestMetadata(
                 MediaItem.RequestMetadata.Builder().setMediaUri(uri).build()
@@ -270,16 +569,15 @@ class MainActivity : AppCompatActivity() {
             )
             .build()
 
-    // ---------------------------------------------------------------- interface
+    // ================================================================ painel do leitor
 
-    private fun updateUi() {
+    private fun updatePlayerUi() {
         val c = controller ?: return
         val item = c.currentMediaItem
         nowPlaying.text = item?.mediaMetadata?.title ?: getString(R.string.nothing_playing)
 
         btnPlay.setImageResource(if (c.isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
-        btnPlay.contentDescription =
-            getString(if (c.isPlaying) R.string.pause else R.string.play)
+        btnPlay.contentDescription = getString(if (c.isPlaying) R.string.pause else R.string.play)
 
         btnShuffle.alpha = if (c.shuffleModeEnabled) 1f else 0.35f
         when (c.repeatMode) {
@@ -311,5 +609,10 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val MENU_REFRESH = 1
+        private const val ACT_PLAY_FOLDER = 1
+        private const val ACT_SHUFFLE_FOLDER = 2
+        private const val ACT_NEW_PLAYLIST = 3
+        private const val ACT_PLAY_PLAYLIST = 4
+        private const val ACT_SHUFFLE_PLAYLIST = 5
     }
 }

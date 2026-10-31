@@ -5,7 +5,10 @@ App Android simples para ouvir ficheiros **MP4** (só o áudio) guardados no cel
 ## O que faz
 
 - Encontra sozinho todos os MP4 da memória do celular (e cartão SD), em qualquer pasta
-- Pesquisa por nome do ficheiro ou da pasta
+- Três separadores: **Faixas** (todas), **Pastas** (navegar pelas pastas do celular) e **Playlists**
+- **Pastas:** entra e sai das pastas como num explorador de ficheiros; "Tocar esta pasta" toca tudo o que está dentro (incluindo subpastas)
+- **Playlists:** criadas dentro do app; mantenha o dedo numa faixa ou pasta › "Adicionar à playlist…"; dentro da playlist pode mover faixas para cima/baixo ou removê-las; mantenha o dedo numa playlist para mudar o nome ou apagar
+- Pesquisa no separador aberto
 - Toca com o ecrã desligado ou com outra app aberta
 - **Bluetooth:** o som sai pelo carro/caixinha, e os botões do rádio (▶ ⏸ ⏭ ⏮) controlam o app; o nome da faixa aparece no ecrã do carro, se o rádio mostrar
 - Pausa sozinho quando o Bluetooth desliga (ex.: ao desligar o carro) e durante chamadas
