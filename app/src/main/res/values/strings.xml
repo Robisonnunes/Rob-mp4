@@ -42,4 +42,10 @@
     <string name="full_access_message">Algumas pastas, como as do WhatsApp (Music/WhatsApp), estão escondidas do catálogo de música do Android.\n\nPara o Rob mp4 as mostrar, ative \"Permitir acesso para gerir todos os ficheiros\" no ecrã seguinte e volte ao app.</string>
     <string name="full_access_go">Ativar</string>
     <string name="not_now">Agora não</string>
+    <string name="rename_file">Mudar o nome do ficheiro</string>
+    <string name="file_name_hint">Nome do ficheiro</string>
+    <string name="rename_exists">Já existe um ficheiro com esse nome nesta pasta.</string>
+    <string name="rename_failed">Não foi possível mudar o nome deste ficheiro.</string>
+    <string name="renamed">Nome alterado</string>
+    <string name="rename_needs_access">Para mudar o nome dos ficheiros, o Rob mp4 precisa de \"Permitir acesso para gerir todos os ficheiros\". Ative no ecrã seguinte e volte ao app.</string>
 </resources>

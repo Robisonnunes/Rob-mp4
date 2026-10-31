@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.content.Intent
 import android.net.Uri
+import android.media.MediaScannerConnection
 import android.os.Bundle
 import android.provider.Settings
 import android.os.Handler
@@ -35,6 +36,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.tabs.TabLayout
 import com.google.common.util.concurrent.ListenableFuture
+import java.io.File
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
@@ -248,7 +250,10 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.POST_NOTIFICATIONS
             )
         } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
         }
         permissionLauncher.launch(perms)
     }
@@ -472,6 +477,7 @@ class MainActivity : AppCompatActivity() {
         val playlist = if (currentTab == Tab.PLAYLISTS) store.get(openPlaylistId) else null
         val options = mutableListOf<Pair<String, () -> Unit>>()
         options += getString(R.string.add_to_playlist) to { chooseplaylist(listOf(track.id)) }
+        options += getString(R.string.rename_file) to { renameTrack(track) }
         if (playlist != null) {
             options += getString(R.string.move_up) to { store.move(playlist.id, track.id, -1); render() }
             options += getString(R.string.move_down) to { store.move(playlist.id, track.id, +1); render() }
@@ -550,12 +556,17 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun askName(title: String, initial: String, onOk: (String) -> Unit) {
+    private fun askName(
+        title: String,
+        initial: String,
+        hintRes: Int = R.string.playlist_name_hint,
+        onOk: (String) -> Unit
+    ) {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             setText(initial)
             setSelection(initial.length)
-            hint = getString(R.string.playlist_name_hint)
+            hint = getString(hintRes)
         }
         val pad = (20 * resources.displayMetrics.density).toInt()
         val box = FrameLayout(this).apply {
@@ -572,6 +583,75 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
+
+    // ================================================================ mudar o nome do ficheiro
+
+    private fun canWriteFiles(): Boolean = when {
+        Build.VERSION.SDK_INT >= 30 -> TrackRepository.hasFullAccess(this)
+        else -> ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun renameTrack(track: Track) {
+        if (!track.id.startsWith("/")) {
+            toast(getString(R.string.rename_failed))
+            return
+        }
+        if (!canWriteFiles()) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.full_access_title)
+                    .setMessage(R.string.rename_needs_access)
+                    .setPositiveButton(R.string.full_access_go) { _, _ -> openFullAccessSettings() }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } else {
+                requestPermissions()
+            }
+            return
+        }
+        val file = File(track.id)
+        val ext = file.extension
+        askName(getString(R.string.rename_file), track.title, R.string.file_name_hint) { typed ->
+            val clean = typed.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().trimEnd('.')
+            if (clean.isEmpty()) return@askName
+            val target = File(file.parentFile, if (ext.isEmpty()) clean else "$clean.$ext")
+            when {
+                target.absolutePath == file.absolutePath -> Unit
+                target.exists() -> toast(getString(R.string.rename_exists))
+                !file.renameTo(target) -> toast(getString(R.string.rename_failed))
+                else -> {
+                    val oldPath = file.absolutePath
+                    val newPath = target.absolutePath
+                    store.renamePath(oldPath, newPath)
+                    updateQueueAfterRename(oldPath, target)
+                    MediaScannerConnection.scanFile(this, arrayOf(oldPath, newPath), null, null)
+                    toast(getString(R.string.renamed))
+                    loadTracks()
+                }
+            }
+        }
+    }
+
+    /** Se o ficheiro renomeado estiver na fila de reprodução, aponta para o nome novo. */
+    private fun updateQueueAfterRename(oldPath: String, target: File) {
+        val c = controller ?: return
+        for (i in 0 until c.mediaItemCount) {
+            if (i == c.currentMediaItemIndex) continue // a faixa atual continua a tocar
+            if (c.getMediaItemAt(i).mediaId != oldPath) continue
+            val t = Track(
+                id = target.absolutePath,
+                uri = Uri.fromFile(target),
+                title = target.nameWithoutExtension,
+                folder = target.parentFile?.name.orEmpty(),
+                durationMs = 0L,
+                dir = target.parent ?: "/"
+            )
+            c.replaceMediaItem(i, t.toMediaItem())
+        }
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
     // ================================================================ reprodução
 

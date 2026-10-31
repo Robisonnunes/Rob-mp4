@@ -71,6 +71,19 @@ class PlaylistStore(context: Context) {
         if (changed) save()
     }
 
+    /** O ficheiro mudou de nome: atualiza todas as playlists. */
+    fun renamePath(oldPath: String, newPath: String) {
+        var changed = false
+        for (p in playlists) {
+            val i = p.items.indexOf(oldPath)
+            if (i >= 0) {
+                p.items[i] = newPath
+                changed = true
+            }
+        }
+        if (changed) save()
+    }
+
     fun get(id: String?): Playlist? = playlists.firstOrNull { it.id == id }
 
     fun sorted(): List<Playlist> = playlists.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
