@@ -50,8 +50,8 @@
     <string name="rename_needs_access">Para mudar o nome dos ficheiros, o Rob mp4 precisa de \"Permitir acesso para gerir todos os ficheiros\". Ative no ecrã seguinte e volte ao app.</string>
     <string name="favorites">Favoritos</string>
     <string name="favorites_row">Favoritos (%1$d)</string>
-    <string name="favorite">☆ Adicionar aos favoritos</string>
-    <string name="unfavorite">★ Remover dos favoritos</string>
+    <string name="favorite">☆ Marcar como pasta favorita</string>
+    <string name="unfavorite">★ Remover das pastas favoritas</string>
     <string name="play_favorites">Tocar faixas favoritas</string>
     <string name="shuffle_favorites">Tocar favoritas em aleatório</string>
     <string name="favorites_empty">Ainda não tem favoritos.\n\nMantenha o dedo numa faixa ou numa pasta e escolha \"Adicionar aos favoritos\".</string>
@@ -62,4 +62,8 @@
     <string name="done">Concluído</string>
     <string name="added_one">Adicionada a \"%1$s\"</string>
     <string name="removed_from">Removida de \"%1$s\"</string>
+    <string name="favorite_folder">☆ Marcar esta pasta como favorita</string>
+    <string name="unfavorite_folder">★ Pasta favorita (tocar para desmarcar)</string>
+    <string name="folder_favorited">Pasta favorita: aparece no início de \"Adicionar músicas\"</string>
+    <string name="folder_unfavorited">Pasta removida dos favoritos</string>
 </resources>

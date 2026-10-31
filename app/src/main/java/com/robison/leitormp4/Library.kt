@@ -23,11 +23,10 @@ object Library {
 
     data class ListInfo(val id: String, val name: String)
 
-    /** Favoritos primeiro, depois as playlists por ordem alfabética. */
+    /** Playlists por ordem alfabética (menu do carro e troca de playlist). */
     fun lists(context: Context): List<ListInfo> {
         val store = PlaylistStore(context)
-        return listOf(ListInfo(FAV_ID, context.getString(R.string.favorites))) +
-            store.sorted().map { ListInfo(it.id, it.name) }
+        return store.sorted().map { ListInfo(it.id, it.name) }
     }
 
     fun listName(context: Context, id: String): String =

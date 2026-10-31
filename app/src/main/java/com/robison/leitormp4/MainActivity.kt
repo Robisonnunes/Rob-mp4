@@ -401,9 +401,6 @@ class MainActivity : AppCompatActivity() {
         when (screen) {
             Screen.HOME -> {
                 title = getString(R.string.my_playlists)
-                if (q.isEmpty()) {
-                    rows += Row.Action(ACT_FAVORITES, getString(R.string.favorites_row, favoriteCount()), R.drawable.ic_star)
-                }
                 store.sorted().filter { match(it.name) }
                     .forEach { rows += Row.PlaylistRow(it, tracksOf(it).size) }
                 fab.text = getString(R.string.new_playlist)
@@ -439,8 +436,24 @@ class MainActivity : AppCompatActivity() {
                 val f = effectiveFolder()
                 title = getString(R.string.adding_to, p.name) +
                     (f?.let { "  ›  " + FolderTree.displayName(it) } ?: "")
-                if (needsFullAccess() && !pickerCanGoUpFolder() && q.isEmpty()) {
+                val atStart = !pickerCanGoUpFolder()
+                if (needsFullAccess() && atStart && q.isEmpty()) {
                     rows += Row.Action(ACT_FULL_ACCESS, getString(R.string.full_access_row), R.drawable.ic_lock_open)
+                }
+                // Atalhos: pastas favoritas no topo do início
+                if (atStart && q.isEmpty()) {
+                    favs.folderPaths()
+                        .filter { it != f && allTracks.any { t -> FolderTree.isInside(t.dir, it) } }
+                        .sortedBy { it.substringAfterLast('/').lowercase() }
+                        .forEach { rows += Row.FolderRow(it, FolderTree.displayName(it), tracksInFolder(it).size) }
+                }
+                // Marcar / desmarcar a pasta aberta como favorita
+                if (f != null && q.isEmpty() && !(f in volumes)) {
+                    rows += if (favs.isFolder(f)) {
+                        Row.Action(ACT_TOGGLE_FAV_FOLDER, getString(R.string.unfavorite_folder), R.drawable.ic_star)
+                    } else {
+                        Row.Action(ACT_TOGGLE_FAV_FOLDER, getString(R.string.favorite_folder), R.drawable.ic_star_outline)
+                    }
                 }
                 if (f == null) {
                     volumes.forEach { v ->
@@ -500,7 +513,6 @@ class MainActivity : AppCompatActivity() {
             store.get(openListId)?.items?.contains(row.track.id) == true
         ) sb.append("✓ ")
         val fav = when (row) {
-            is Row.TrackRow -> favs.isTrack(row.track.id)
             is Row.FolderRow -> favs.isFolder(row.path)
             else -> false
         }
@@ -535,6 +547,11 @@ class MainActivity : AppCompatActivity() {
                 ACT_PLAY_LIST -> playCurrentList(0)
                 ACT_SHUFFLE_LIST -> playCurrentList(0, shuffle = true)
                 ACT_FULL_ACCESS -> openFullAccessSettings()
+                ACT_TOGGLE_FAV_FOLDER -> effectiveFolder()?.let {
+                    val now = favs.toggleFolder(it)
+                    toast(getString(if (now) R.string.folder_favorited else R.string.folder_unfavorited))
+                    render()
+                }
                 ACT_ADD_FOLDER -> {
                     val p = store.get(openListId) ?: return
                     val f = effectiveFolder() ?: return
@@ -568,9 +585,6 @@ class MainActivity : AppCompatActivity() {
     private fun trackMenu(track: Track) {
         val playlist = if (screen == Screen.LIST) store.get(openListId) else null
         val options = mutableListOf<Pair<String, () -> Unit>>()
-        options += getString(
-            if (favs.isTrack(track.id)) R.string.unfavorite else R.string.favorite
-        ) to { favs.toggleTrack(track.id); render() }
         options += getString(R.string.add_to_playlist) to { choosePlaylist(listOf(track.id)) }
         if (playlist != null) {
             options += getString(R.string.move_up) to { store.move(playlist.id, track.id, -1); render() }
@@ -852,5 +866,6 @@ class MainActivity : AppCompatActivity() {
         private const val ACT_SHUFFLE_LIST = 3
         private const val ACT_FULL_ACCESS = 4
         private const val ACT_ADD_FOLDER = 5
+        private const val ACT_TOGGLE_FAV_FOLDER = 6
     }
 }
