@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LeitorMP4" parent="Theme.Material3.DayNight">
+        <item name="colorPrimary">#1E6B52</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#A8F2D2</item>
+    </style>
+</resources>

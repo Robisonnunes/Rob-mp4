@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Leitor MP4</string>
+    <string name="search_hint">Procurar por nome ou pasta</string>
+    <string name="refresh">Atualizar</string>
+    <string name="loading">A procurar ficheiros MP4…</string>
+    <string name="no_files">Nenhum ficheiro MP4 encontrado.\n\nCopie os MP4 para o celular (por exemplo, para a pasta Música ou Download) e toque em Atualizar.</string>
+    <string name="no_results">Nada encontrado para esta pesquisa.</string>
+    <string name="no_permission">O app precisa de acesso aos ficheiros de mídia para encontrar os MP4.\n\nToque em Atualizar para dar a permissão, ou ative-a em Definições › Apps › Leitor MP4 › Permissões.</string>
+    <string name="nothing_playing">Escolha uma faixa da lista</string>
+    <string name="play">Tocar</string>
+    <string name="pause">Pausa</string>
+    <string name="next">Próxima</string>
+    <string name="previous">Anterior</string>
+    <string name="shuffle">Aleatório</string>
+    <string name="repeat">Repetir</string>
+</resources>
