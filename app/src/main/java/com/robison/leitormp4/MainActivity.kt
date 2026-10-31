@@ -36,7 +36,7 @@ import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
-    private enum class Tab { TRACKS, FOLDERS, PLAYLISTS }
+    private enum class Tab { FOLDERS, PLAYLISTS }
 
     // Vistas
     private lateinit var tabs: TabLayout
@@ -62,7 +62,7 @@ class MainActivity : AppCompatActivity() {
     private var allTracks: List<Track> = emptyList()
     private var tracksById: Map<String, Track> = emptyMap()
     private var volumes: List<String> = emptyList()
-    private var currentTab = Tab.TRACKS
+    private var currentTab = Tab.FOLDERS
     private var folderPath: String? = null
     private var openPlaylistId: String? = null
     private var visibleTracks: List<Track> = emptyList()
@@ -122,7 +122,6 @@ class MainActivity : AppCompatActivity() {
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
-        tabs.addTab(tabs.newTab().setText(R.string.tab_tracks))
         tabs.addTab(tabs.newTab().setText(R.string.tab_folders))
         tabs.addTab(tabs.newTab().setText(R.string.tab_playlists))
         tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
@@ -276,7 +275,6 @@ class MainActivity : AppCompatActivity() {
         folderPath ?: volumes.singleOrNull()
 
     private fun canGoUp(): Boolean = when (currentTab) {
-        Tab.TRACKS -> false
         Tab.FOLDERS -> {
             val f = effectiveFolder()
             f != null && !(f in volumes && volumes.size == 1)
@@ -291,7 +289,6 @@ class MainActivity : AppCompatActivity() {
                 folderPath = if (f in volumes) null else f.substringBeforeLast('/')
             }
             Tab.PLAYLISTS -> openPlaylistId = null
-            Tab.TRACKS -> return
         }
         clearSearchAndRender()
     }
@@ -312,11 +309,6 @@ class MainActivity : AppCompatActivity() {
         var title: String? = null
 
         when (currentTab) {
-            Tab.TRACKS -> {
-                allTracks.filter { match(it.title) || match(it.folder) }
-                    .forEach { rows += Row.TrackRow(it) }
-            }
-
             Tab.FOLDERS -> {
                 val f = effectiveFolder()
                 if (f == null) {
@@ -332,8 +324,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     FolderTree.subfolders(allTracks, f).filter { match(it.name) }
                         .forEach { rows += Row.FolderRow(it.path, it.name, it.count) }
-                    allTracks.filter { it.dir == f && match(it.title) }
-                        .forEach { rows += Row.TrackRow(it) }
+                    // Sem pesquisa: só as faixas desta pasta. Com pesquisa: procura também nas subpastas.
+                    val tracks = if (q.isEmpty()) allTracks.filter { it.dir == f }
+                    else inside.filter { match(it.title) }
+                    tracks.forEach { rows += Row.TrackRow(it) }
                 }
             }
 

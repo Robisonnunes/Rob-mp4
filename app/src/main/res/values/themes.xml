@@ -1,8 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.LeitorMP4" parent="Theme.Material3.DayNight">
-        <item name="colorPrimary">#1E6B52</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorPrimaryContainer">#A8F2D2</item>
+    <!-- Tema escuro sempre, com cores neon a combinar com o ícone -->
+    <style name="Theme.LeitorMP4" parent="Theme.Material3.Dark">
+        <item name="colorPrimary">#00E5FF</item>
+        <item name="colorOnPrimary">#00262B</item>
+        <item name="colorPrimaryContainer">#3A1466</item>
+        <item name="colorOnPrimaryContainer">#FFFFFF</item>
+        <item name="colorSecondary">#FF2EC4</item>
+        <item name="colorAccent">#00E5FF</item>
+        <item name="android:colorBackground">#0E0B16</item>
+        <item name="colorSurface">#14111F</item>
+        <item name="colorOnSurface">#ECE6F5</item>
+        <item name="colorSurfaceVariant">#1E1830</item>
+        <item name="colorOnSurfaceVariant">#C9C0DA</item>
+        <item name="android:statusBarColor">#0E0B16</item>
+        <item name="android:navigationBarColor">#14111F</item>
+        <item name="actionBarStyle">@style/RobActionBar</item>
+    </style>
+
+    <style name="RobActionBar" parent="Widget.Material3.ActionBar.Solid">
+        <item name="background">@color/bar</item>
     </style>
 </resources>

@@ -1,11 +1,11 @@
-# Leitor MP4 (Android)
+# Rob mp4 (Android)
 
 App Android simples para ouvir ficheiros **MP4** (só o áudio) guardados no celular, com som pelo **Bluetooth** do carro ou da caixinha de som.
 
 ## O que faz
 
 - Encontra sozinho todos os MP4 da memória do celular (e cartão SD), em qualquer pasta
-- Três separadores: **Faixas** (todas), **Pastas** (navegar pelas pastas do celular) e **Playlists**
+- Dois separadores: **Pastas** (navegar pelas pastas do celular) e **Playlists**; tema escuro
 - **Pastas:** entra e sai das pastas como num explorador de ficheiros; "Tocar esta pasta" toca tudo o que está dentro (incluindo subpastas)
 - **Playlists:** criadas dentro do app; mantenha o dedo numa faixa ou pasta › "Adicionar à playlist…"; dentro da playlist pode mover faixas para cima/baixo ou removê-las; mantenha o dedo numa playlist para mudar o nome ou apagar
 - Pesquisa no separador aberto
