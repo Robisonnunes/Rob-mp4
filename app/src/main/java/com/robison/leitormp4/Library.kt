@@ -38,7 +38,7 @@ object Library {
     fun tracksOfList(context: Context, id: String): List<Track> {
         val paths: List<String> = if (id == FAV_ID) {
             val favs = Favorites(context)
-            val fromFolders = favs.folderPaths().sorted().flatMap { audioFilesIn(File(it)) }
+            val fromFolders = favs.folderPaths().sorted().flatMap { audioFilesIn(File(it)) }.map { it.absolutePath }
             (favs.trackIds().sortedBy { File(it).name.lowercase() } + fromFolders).distinct()
         } else {
             PlaylistStore(context).get(id)?.items.orEmpty()
