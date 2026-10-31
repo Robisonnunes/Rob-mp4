@@ -10,7 +10,7 @@
     <string name="no_files">Nenhum ficheiro de áudio encontrado.\n\nCopie os MP4 para o celular (por exemplo, para a pasta Música ou Download) e toque em Atualizar.</string>
     <string name="no_results">Nada encontrado.</string>
     <string name="no_permission">O app precisa de acesso aos ficheiros de mídia para encontrar os MP4.\n\nToque em Atualizar para dar a permissão, ou ative-a em Definições › Apps › Rob mp4 › Permissões.</string>
-    <string name="playlist_empty">Esta playlist está vazia.\n\nPara acrescentar faixas, mantenha o dedo numa faixa ou numa pasta e escolha \"Adicionar à playlist\".</string>
+    <string name="playlist_empty">Esta playlist está vazia.\n\nToque em \"Adicionar músicas\" para escolher músicas nas pastas do celular.</string>
     <string name="nothing_playing">Escolha uma faixa da lista</string>
     <string name="play">Tocar</string>
     <string name="pause">Pausa</string>
@@ -55,4 +55,11 @@
     <string name="play_favorites">Tocar faixas favoritas</string>
     <string name="shuffle_favorites">Tocar favoritas em aleatório</string>
     <string name="favorites_empty">Ainda não tem favoritos.\n\nMantenha o dedo numa faixa ou numa pasta e escolha \"Adicionar aos favoritos\".</string>
+    <string name="my_playlists">Minhas playlists</string>
+    <string name="add_songs">Adicionar músicas</string>
+    <string name="adding_to">Adicionar a %1$s</string>
+    <string name="add_whole_folder">Adicionar a pasta inteira (%1$d)</string>
+    <string name="done">Concluído</string>
+    <string name="added_one">Adicionada a \"%1$s\"</string>
+    <string name="removed_from">Removida de \"%1$s\"</string>
 </resources>

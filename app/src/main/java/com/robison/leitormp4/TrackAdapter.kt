@@ -19,7 +19,7 @@ sealed class Row {
 class RowAdapter(
     private val onClick: (Row) -> Unit,
     private val onLongClick: (Row) -> Unit,
-    private val isFavorite: (Row) -> Boolean
+    private val prefixOf: (Row) -> String
 ) : RecyclerView.Adapter<RowAdapter.Holder>() {
 
     private var items: List<Row> = emptyList()
@@ -57,7 +57,7 @@ class RowAdapter(
             }
             is Row.FolderRow -> {
                 holder.icon.setImageResource(R.drawable.ic_folder)
-                holder.title.text = if (isFavorite(row)) "★ ${row.name}" else row.name
+                holder.title.text = prefixOf(row) + row.name
                 holder.subtitle.text = faixas(row.count)
                 holder.subtitle.visibility = View.VISIBLE
             }
@@ -71,7 +71,7 @@ class RowAdapter(
                 val t = row.track
                 val playing = t.id == currentId
                 holder.icon.setImageResource(if (playing) R.drawable.ic_equalizer else R.drawable.ic_music)
-                holder.title.text = if (isFavorite(row)) "★ ${t.title}" else t.title
+                holder.title.text = prefixOf(row) + t.title
                 holder.subtitle.text = listOf(t.folder, if (t.durationMs > 0) formatTime(t.durationMs) else "")
                     .filter { it.isNotBlank() }
                     .joinToString("  ·  ")

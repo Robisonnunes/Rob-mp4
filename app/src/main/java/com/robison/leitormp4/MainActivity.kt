@@ -2,15 +2,15 @@ package com.robison.leitormp4
 
 import android.Manifest
 import android.content.ComponentName
-import android.content.pm.PackageManager
-import android.os.Build
 import android.content.Intent
-import android.net.Uri
+import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.text.InputType
 import android.view.Menu
 import android.view.MenuItem
@@ -27,30 +27,28 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.widget.doAfterTextChanged
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.tabs.TabLayout
+import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.File
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
-    private enum class Tab { FOLDERS, PLAYLISTS }
+    /** Ecrãs: lista de playlists → dentro de uma playlist → escolher músicas nas pastas. */
+    private enum class Screen { HOME, LIST, PICKER }
 
     // Vistas
-    private lateinit var tabs: TabLayout
-    private lateinit var navBar: View
     private lateinit var navBack: ImageButton
     private lateinit var navTitle: TextView
     private lateinit var search: EditText
     private lateinit var emptyView: TextView
     private lateinit var list: RecyclerView
+    private lateinit var fab: ExtendedFloatingActionButton
     private lateinit var nowPlaying: TextView
     private lateinit var seekBar: SeekBar
     private lateinit var timeCurrent: TextView
@@ -64,21 +62,20 @@ class MainActivity : AppCompatActivity() {
     // Estado
     private lateinit var store: PlaylistStore
     private lateinit var favs: Favorites
-    private var showFavorites = false
-    private val adapter = RowAdapter(::onRowClick, ::onRowLongClick, ::isFavorite)
+    private val adapter = RowAdapter(::onRowClick, ::onRowLongClick, ::prefixOf)
     private var allTracks: List<Track> = emptyList()
     private var tracksById: Map<String, Track> = emptyMap()
     private var volumes: List<String> = emptyList()
-    private var currentTab = Tab.FOLDERS
-    private var folderPath: String? = null
-    private var openPlaylistId: String? = null
     private var visibleTracks: List<Track> = emptyList()
     private var loadedWithFullAccess: Boolean? = null
+
+    private var screen = Screen.HOME
+    private var openListId: String? = null      // playlist aberta (ou Library.FAV_ID)
+    private var pickFolder: String? = null      // pasta aberta no seletor
 
     // Leitor
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
-
     private val io = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
     private var userSeeking = false
@@ -112,13 +109,12 @@ class MainActivity : AppCompatActivity() {
         store = PlaylistStore(this)
         favs = Favorites(this)
 
-        tabs = findViewById(R.id.tabs)
-        navBar = findViewById(R.id.navBar)
         navBack = findViewById(R.id.navBack)
         navTitle = findViewById(R.id.navTitle)
         search = findViewById(R.id.search)
         emptyView = findViewById(R.id.emptyView)
         list = findViewById(R.id.trackList)
+        fab = findViewById(R.id.fab)
         nowPlaying = findViewById(R.id.nowPlaying)
         seekBar = findViewById(R.id.seekBar)
         timeCurrent = findViewById(R.id.timeCurrent)
@@ -132,26 +128,10 @@ class MainActivity : AppCompatActivity() {
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
-        tabs.addTab(tabs.newTab().setText(R.string.tab_folders))
-        tabs.addTab(tabs.newTab().setText(R.string.tab_playlists))
-        tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
-            override fun onTabSelected(t: TabLayout.Tab) {
-                currentTab = Tab.entries[t.position]
-                clearSearchAndRender()
-            }
-            override fun onTabUnselected(t: TabLayout.Tab) {}
-            override fun onTabReselected(t: TabLayout.Tab) {
-                // Tocar de novo no separador volta ao início dele
-                folderPath = null
-                openPlaylistId = null
-                showFavorites = false
-                clearSearchAndRender()
-            }
-        })
-
         navBack.setOnClickListener { goUp() }
         onBackPressedDispatcher.addCallback(this, backCallback)
         search.doAfterTextChanged { render() }
+        fab.setOnClickListener { onFabClick() }
 
         btnPlay.setOnClickListener { togglePlay() }
         btnNext.setOnClickListener { controller?.seekToNextMediaItem() }
@@ -185,7 +165,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Voltou das definições depois de dar (ou tirar) o acesso a todas as pastas
         val full = TrackRepository.hasFullAccess(this)
         if (loadedWithFullAccess != null && loadedWithFullAccess != full) loadTracks()
     }
@@ -262,8 +241,6 @@ class MainActivity : AppCompatActivity() {
         permissionLauncher.launch(perms)
     }
 
-    // ================================================================ acesso a todas as pastas
-
     /** No Android 11+ é preciso "acesso a todos os ficheiros" para ver pastas como as do WhatsApp. */
     private fun needsFullAccess() =
         Build.VERSION.SDK_INT >= 30 && !TrackRepository.hasFullAccess(this)
@@ -283,12 +260,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun openFullAccessSettings() {
         if (Build.VERSION.SDK_INT < 30) return
-        val intent = Intent(
-            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-            Uri.parse("package:$packageName")
-        )
         try {
-            startActivity(intent)
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
         } catch (_: Exception) {
             startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
@@ -298,23 +276,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadTracks() {
         if (!hasMediaPermission()) {
-            showEmpty(getString(R.string.no_permission))
+            render()
             return
         }
         showEmpty(getString(R.string.loading))
         val full = TrackRepository.hasFullAccess(this)
         io.execute {
             val result = TrackRepository.loadAll(applicationContext, full)
-            val tracks = result.tracks
             runOnUiThread {
                 loadedWithFullAccess = full
                 store.migrate(result.aliases)
-                allTracks = tracks
-                tracksById = tracks.associateBy { it.id }
-                volumes = tracks.map { FolderTree.volumeOf(it.dir) }.distinct().sorted()
-                if (folderPath != null && allTracks.none { FolderTree.isInside(it.dir, folderPath!!) }) {
-                    folderPath = null
-                }
+                allTracks = result.tracks
+                tracksById = allTracks.associateBy { it.id }
+                volumes = allTracks.map { FolderTree.volumeOf(it.dir) }.distinct().sorted()
+                val pf = pickFolder
+                if (pf != null && allTracks.none { FolderTree.isInside(it.dir, pf) }) pickFolder = null
                 render()
             }
         }
@@ -324,44 +300,60 @@ class MainActivity : AppCompatActivity() {
         allTracks.filter { FolderTree.isInside(it.dir, path) }
             .sortedWith(compareBy<Track>({ it.dir.lowercase() }, { it.title.lowercase() }))
 
-    private fun favoriteTracks(): List<Track> =
-        favs.trackIds().mapNotNull { tracksById[it] }
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+    /** Faixa conhecida pelo caminho; se não estiver na lista carregada, lê do disco. */
+    private fun trackFor(path: String): Track? =
+        tracksById[path] ?: File(path).takeIf { it.isFile }?.let { Library.trackFromFile(it) }
 
-    private fun isFavorite(row: Row): Boolean = when (row) {
-        is Row.TrackRow -> favs.isTrack(row.track.id)
-        is Row.FolderRow -> favs.isFolder(row.path)
-        else -> false
+    private fun tracksOf(p: Playlist): List<Track> = p.items.mapNotNull { trackFor(it) }
+
+    /** Favoritos = faixas favoritas + tudo o que está dentro das pastas favoritas. */
+    private fun favoriteTracks(): List<Track> {
+        val single = favs.trackIds().mapNotNull { trackFor(it) }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+        val fromFolders = favs.folderPaths().sorted().flatMap { tracksInFolder(it) }
+        return (single + fromFolders).distinctBy { it.id }
     }
 
-    private fun tracksOf(p: Playlist): List<Track> = p.items.mapNotNull { tracksById[it] }
+    private fun favoriteCount(): Int = favoriteTracks().size
 
     // ================================================================ navegação
 
-    /** Pasta mostrada no separador Pastas; com um só armazenamento, começa logo nele. */
-    private fun effectiveFolder(): String? =
-        folderPath ?: volumes.singleOrNull()
+    /** Pasta mostrada no seletor; com um só armazenamento, começa logo nele. */
+    private fun effectiveFolder(): String? = pickFolder ?: volumes.singleOrNull()
 
-    private fun canGoUp(): Boolean = when (currentTab) {
-        Tab.FOLDERS -> {
-            val f = effectiveFolder()
-            showFavorites || (f != null && !(f in volumes && volumes.size == 1))
-        }
-        Tab.PLAYLISTS -> openPlaylistId != null
+    private fun pickerCanGoUpFolder(): Boolean {
+        val f = effectiveFolder() ?: return false
+        return !(f in volumes && volumes.size == 1)
     }
 
     private fun goUp() {
-        when (currentTab) {
-            Tab.FOLDERS -> {
-                if (showFavorites) {
-                    showFavorites = false
+        when (screen) {
+            Screen.HOME -> return
+            Screen.LIST -> {
+                screen = Screen.HOME
+                openListId = null
+            }
+            Screen.PICKER -> {
+                if (pickerCanGoUpFolder()) {
+                    val f = effectiveFolder()!!
+                    pickFolder = if (f in volumes) null else f.substringBeforeLast('/')
                 } else {
-                    val f = effectiveFolder() ?: return
-                    folderPath = if (f in volumes) null else f.substringBeforeLast('/')
+                    screen = Screen.LIST
                 }
             }
-            Tab.PLAYLISTS -> openPlaylistId = null
         }
+        clearSearchAndRender()
+    }
+
+    private fun openList(id: String) {
+        openListId = id
+        screen = Screen.LIST
+        clearSearchAndRender()
+    }
+
+    private fun openPicker() {
+        if (openListId == null || openListId == Library.FAV_ID) return
+        screen = Screen.PICKER
         clearSearchAndRender()
     }
 
@@ -371,6 +363,27 @@ class MainActivity : AppCompatActivity() {
         list.scrollToPosition(0)
     }
 
+    private fun onFabClick() {
+        when (screen) {
+            Screen.HOME -> createPlaylist()
+            Screen.LIST -> openPicker()
+            Screen.PICKER -> {
+                screen = Screen.LIST
+                clearSearchAndRender()
+            }
+        }
+    }
+
+    private fun createPlaylist() {
+        askName(getString(R.string.new_playlist), "") { name ->
+            val p = store.create(name)
+            openListId = p.id
+            pickFolder = null
+            screen = Screen.PICKER   // logo a seguir, escolher as músicas
+            clearSearchAndRender()
+        }
+    }
+
     // ================================================================ desenhar a lista
 
     private fun render() {
@@ -378,90 +391,99 @@ class MainActivity : AppCompatActivity() {
         fun match(s: String) = q.isEmpty() || s.contains(q, ignoreCase = true)
 
         val rows = mutableListOf<Row>()
-        var title: String? = null
+        val title: String
 
-        when (currentTab) {
-            Tab.FOLDERS -> if (showFavorites) {
-                title = getString(R.string.favorites)
-                val favTracks = favoriteTracks()
-                if (favTracks.isNotEmpty() && q.isEmpty()) {
-                    rows += Row.Action(ACT_PLAY_FAVS, getString(R.string.play_favorites), R.drawable.ic_play)
-                    rows += Row.Action(ACT_SHUFFLE_FAVS, getString(R.string.shuffle_favorites), R.drawable.ic_shuffle)
+        if (screen != Screen.HOME && openListId != Library.FAV_ID && store.get(openListId) == null) {
+            screen = Screen.HOME
+            openListId = null
+        }
+
+        when (screen) {
+            Screen.HOME -> {
+                title = getString(R.string.my_playlists)
+                if (q.isEmpty()) {
+                    rows += Row.Action(ACT_FAVORITES, getString(R.string.favorites_row, favoriteCount()), R.drawable.ic_star)
                 }
-                favs.folderPaths()
-                    .map { it to tracksInFolder(it).size }
-                    .filter { (path, n) -> n > 0 && match(path.substringAfterLast('/')) }
-                    .sortedBy { it.first.substringAfterLast('/').lowercase() }
-                    .forEach { (path, n) -> rows += Row.FolderRow(path, FolderTree.displayName(path), n) }
-                favTracks.filter { match(it.title) }.forEach { rows += Row.TrackRow(it) }
-            } else {
+                store.sorted().filter { match(it.name) }
+                    .forEach { rows += Row.PlaylistRow(it, tracksOf(it).size) }
+                fab.text = getString(R.string.new_playlist)
+                fab.setIconResource(R.drawable.ic_add_dark)
+            }
+
+            Screen.LIST -> {
+                val isFav = openListId == Library.FAV_ID
+                title = if (isFav) getString(R.string.favorites) else store.get(openListId)!!.name
+                val tracks = if (isFav) favoriteTracks() else tracksOf(store.get(openListId)!!)
+                if (tracks.isNotEmpty() && q.isEmpty()) {
+                    rows += Row.Action(ACT_PLAY_LIST, getString(R.string.play_playlist), R.drawable.ic_play)
+                    rows += Row.Action(ACT_SHUFFLE_LIST, getString(R.string.shuffle_playlist), R.drawable.ic_shuffle)
+                }
+                if (isFav) {
+                    favs.folderPaths().sorted()
+                        .map { it to tracksInFolder(it).size }
+                        .filter { (p, n) -> n > 0 && match(p.substringAfterLast('/')) }
+                        .forEach { (p, n) -> rows += Row.FolderRow(p, FolderTree.displayName(p), n) }
+                    favs.trackIds().mapNotNull { trackFor(it) }
+                        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+                        .filter { match(it.title) }
+                        .forEach { rows += Row.TrackRow(it) }
+                } else {
+                    tracks.filter { match(it.title) }.forEach { rows += Row.TrackRow(it) }
+                }
+                fab.text = getString(R.string.add_songs)
+                fab.setIconResource(R.drawable.ic_add_dark)
+            }
+
+            Screen.PICKER -> {
+                val p = store.get(openListId)!!
                 val f = effectiveFolder()
-                if (needsFullAccess() && !canGoUp() && q.isEmpty()) {
+                title = getString(R.string.adding_to, p.name) +
+                    (f?.let { "  ›  " + FolderTree.displayName(it) } ?: "")
+                if (needsFullAccess() && !pickerCanGoUpFolder() && q.isEmpty()) {
                     rows += Row.Action(ACT_FULL_ACCESS, getString(R.string.full_access_row), R.drawable.ic_lock_open)
-                }
-                if (!canGoUp() && q.isEmpty()) {
-                    val n = favs.folderPaths().count { p -> allTracks.any { FolderTree.isInside(it.dir, p) } } +
-                        favoriteTracks().size
-                    rows += Row.Action(ACT_FAVORITES, getString(R.string.favorites_row, n), R.drawable.ic_star)
                 }
                 if (f == null) {
                     volumes.forEach { v ->
                         rows += Row.FolderRow(v, FolderTree.displayName(v), tracksInFolder(v).size)
                     }
                 } else {
-                    title = FolderTree.displayName(f)
                     val inside = tracksInFolder(f)
                     if (inside.isNotEmpty() && q.isEmpty()) {
-                        rows += Row.Action(ACT_PLAY_FOLDER, getString(R.string.play_folder), R.drawable.ic_play)
-                        rows += Row.Action(ACT_SHUFFLE_FOLDER, getString(R.string.shuffle_folder), R.drawable.ic_shuffle)
+                        rows += Row.Action(
+                            ACT_ADD_FOLDER,
+                            getString(R.string.add_whole_folder, inside.size),
+                            R.drawable.ic_add
+                        )
                     }
                     FolderTree.subfolders(allTracks, f).filter { match(it.name) }
                         .forEach { rows += Row.FolderRow(it.path, it.name, it.count) }
-                    // Sem pesquisa: só as faixas desta pasta. Com pesquisa: procura também nas subpastas.
                     val tracks = if (q.isEmpty()) allTracks.filter { it.dir == f }
                     else inside.filter { match(it.title) }
                     tracks.forEach { rows += Row.TrackRow(it) }
                 }
-            }
-
-            Tab.PLAYLISTS -> {
-                val p = store.get(openPlaylistId)
-                if (p == null) {
-                    openPlaylistId = null
-                    if (q.isEmpty()) {
-                        rows += Row.Action(ACT_NEW_PLAYLIST, getString(R.string.new_playlist), R.drawable.ic_add)
-                    }
-                    store.sorted().filter { match(it.name) }
-                        .forEach { rows += Row.PlaylistRow(it, tracksOf(it).size) }
-                } else {
-                    title = p.name
-                    val tracks = tracksOf(p)
-                    if (tracks.isNotEmpty() && q.isEmpty()) {
-                        rows += Row.Action(ACT_PLAY_PLAYLIST, getString(R.string.play_playlist), R.drawable.ic_play)
-                        rows += Row.Action(ACT_SHUFFLE_PLAYLIST, getString(R.string.shuffle_playlist), R.drawable.ic_shuffle)
-                    }
-                    tracks.filter { match(it.title) }.forEach { rows += Row.TrackRow(it) }
-                }
+                fab.text = getString(R.string.done)
+                fab.setIconResource(R.drawable.ic_check_dark)
             }
         }
 
+        fab.visibility = if (screen == Screen.LIST && openListId == Library.FAV_ID) View.GONE else View.VISIBLE
+
         visibleTracks = rows.filterIsInstance<Row.TrackRow>().map { it.track }
         adapter.submit(rows)
-        adapter.setCurrent(controller?.currentMediaItem?.mediaId)
+        adapter.setCurrent(controller?.currentMediaItem?.mediaId?.let { Library.pathOf(it) })
 
-        navBar.visibility = if (title != null) View.VISIBLE else View.GONE
         navTitle.text = title
-        navBack.visibility = if (canGoUp()) View.VISIBLE else View.INVISIBLE
-        backCallback.isEnabled = canGoUp()
+        navBack.visibility = if (screen == Screen.HOME) View.GONE else View.VISIBLE
+        backCallback.isEnabled = screen != Screen.HOME
 
         val empty = when {
             !hasMediaPermission() -> getString(R.string.no_permission)
             rows.isNotEmpty() -> null
             q.isNotEmpty() -> getString(R.string.no_results)
-            currentTab == Tab.PLAYLISTS && openPlaylistId != null -> getString(R.string.playlist_empty)
-            currentTab == Tab.FOLDERS && showFavorites -> getString(R.string.favorites_empty)
-            allTracks.isEmpty() -> getString(R.string.no_files)
-            else -> getString(R.string.no_results)
+            screen == Screen.LIST && openListId == Library.FAV_ID -> getString(R.string.favorites_empty)
+            screen == Screen.LIST -> getString(R.string.playlist_empty)
+            screen == Screen.PICKER && allTracks.isEmpty() -> getString(R.string.no_files)
+            else -> null
         }
         if (empty == null) emptyView.visibility = View.GONE else showEmpty(empty)
     }
@@ -471,41 +493,67 @@ class MainActivity : AppCompatActivity() {
         emptyView.visibility = View.VISIBLE
     }
 
+    /** Marca antes do nome: ✓ = já está na playlist (no seletor), ★ = favorito. */
+    private fun prefixOf(row: Row): String {
+        val sb = StringBuilder()
+        if (row is Row.TrackRow && screen == Screen.PICKER &&
+            store.get(openListId)?.items?.contains(row.track.id) == true
+        ) sb.append("✓ ")
+        val fav = when (row) {
+            is Row.TrackRow -> favs.isTrack(row.track.id)
+            is Row.FolderRow -> favs.isFolder(row.path)
+            else -> false
+        }
+        if (fav) sb.append("★ ")
+        return sb.toString()
+    }
+
     // ================================================================ toques na lista
 
     private fun onRowClick(row: Row) {
         when (row) {
-            is Row.TrackRow -> {
-                val i = visibleTracks.indexOfFirst { it.id == row.track.id }
-                playQueue(visibleTracks, i.coerceAtLeast(0))
-            }
-            is Row.FolderRow -> {
-                folderPath = row.path
-                showFavorites = false
-                clearSearchAndRender()
-            }
-            is Row.PlaylistRow -> {
-                openPlaylistId = row.playlist.id
-                clearSearchAndRender()
-            }
-            is Row.Action -> when (row.action) {
-                ACT_PLAY_FOLDER -> effectiveFolder()?.let { playQueue(tracksInFolder(it), 0) }
-                ACT_SHUFFLE_FOLDER -> effectiveFolder()?.let { playQueue(tracksInFolder(it), 0, shuffle = true) }
-                ACT_PLAY_PLAYLIST -> store.get(openPlaylistId)?.let { playQueue(tracksOf(it), 0) }
-                ACT_SHUFFLE_PLAYLIST -> store.get(openPlaylistId)?.let { playQueue(tracksOf(it), 0, shuffle = true) }
-                ACT_FULL_ACCESS -> openFullAccessSettings()
-                ACT_FAVORITES -> {
-                    showFavorites = true
+            is Row.PlaylistRow -> openList(row.playlist.id)
+
+            is Row.FolderRow -> when (screen) {
+                Screen.PICKER -> {
+                    pickFolder = row.path
                     clearSearchAndRender()
                 }
-                ACT_PLAY_FAVS -> playQueue(favoriteTracks(), 0)
-                ACT_SHUFFLE_FAVS -> playQueue(favoriteTracks(), 0, shuffle = true)
-                ACT_NEW_PLAYLIST -> askName(getString(R.string.new_playlist), "") { name ->
-                    store.create(name)
-                    render()
+                else -> playTracks(tracksInFolder(row.path), 0, listId = null, listName = row.name)
+            }
+
+            is Row.TrackRow -> when (screen) {
+                Screen.PICKER -> togglePicked(row.track)
+                else -> {
+                    val i = visibleTracks.indexOfFirst { it.id == row.track.id }.coerceAtLeast(0)
+                    playCurrentList(i)
+                }
+            }
+
+            is Row.Action -> when (row.action) {
+                ACT_FAVORITES -> openList(Library.FAV_ID)
+                ACT_PLAY_LIST -> playCurrentList(0)
+                ACT_SHUFFLE_LIST -> playCurrentList(0, shuffle = true)
+                ACT_FULL_ACCESS -> openFullAccessSettings()
+                ACT_ADD_FOLDER -> {
+                    val p = store.get(openListId) ?: return
+                    val f = effectiveFolder() ?: return
+                    addTo(p, tracksInFolder(f).map { it.id })
                 }
             }
         }
+    }
+
+    private fun togglePicked(t: Track) {
+        val p = store.get(openListId) ?: return
+        if (t.id in p.items) {
+            store.remove(p.id, t.id)
+            toast(getString(R.string.removed_from, p.name))
+        } else {
+            store.add(p.id, listOf(t.id))
+            toast(getString(R.string.added_one, p.name))
+        }
+        render()
     }
 
     private fun onRowLongClick(row: Row) {
@@ -518,13 +566,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun trackMenu(track: Track) {
-        val playlist = if (currentTab == Tab.PLAYLISTS) store.get(openPlaylistId) else null
+        val playlist = if (screen == Screen.LIST) store.get(openListId) else null
         val options = mutableListOf<Pair<String, () -> Unit>>()
-        options += getString(R.string.add_to_playlist) to { chooseplaylist(listOf(track.id)) }
         options += getString(
             if (favs.isTrack(track.id)) R.string.unfavorite else R.string.favorite
         ) to { favs.toggleTrack(track.id); render() }
-        options += getString(R.string.rename_file) to { renameTrack(track) }
+        options += getString(R.string.add_to_playlist) to { choosePlaylist(listOf(track.id)) }
         if (playlist != null) {
             options += getString(R.string.move_up) to { store.move(playlist.id, track.id, -1); render() }
             options += getString(R.string.move_down) to { store.move(playlist.id, track.id, +1); render() }
@@ -532,30 +579,33 @@ class MainActivity : AppCompatActivity() {
                 store.remove(playlist.id, track.id); render()
             }
         }
+        options += getString(R.string.rename_file) to { renameTrack(track) }
         showOptions(track.title, options)
     }
 
     private fun folderMenu(row: Row.FolderRow) {
         val tracks = tracksInFolder(row.path)
-        showOptions(
-            row.name,
-            listOf(
-                getString(R.string.play_folder) to { playQueue(tracks, 0) },
-                getString(R.string.shuffle_folder) to { playQueue(tracks, 0, shuffle = true) },
-                getString(R.string.add_folder_to_playlist) to { chooseplaylist(tracks.map { it.id }) },
-                getString(
-                    if (favs.isFolder(row.path)) R.string.unfavorite else R.string.favorite
-                ) to { favs.toggleFolder(row.path); render() }
-            )
-        )
+        val options = mutableListOf<Pair<String, () -> Unit>>()
+        if (screen == Screen.PICKER) {
+            store.get(openListId)?.let { p ->
+                options += getString(R.string.add_whole_folder, tracks.size) to { addTo(p, tracks.map { it.id }) }
+            }
+        }
+        options += getString(R.string.play_folder) to { playTracks(tracks, 0, null, row.name) }
+        options += getString(R.string.shuffle_folder) to { playTracks(tracks, 0, null, row.name, shuffle = true) }
+        options += getString(
+            if (favs.isFolder(row.path)) R.string.unfavorite else R.string.favorite
+        ) to { favs.toggleFolder(row.path); render() }
+        showOptions(row.name, options)
     }
 
     private fun playlistMenu(p: Playlist) {
         showOptions(
             p.name,
             listOf(
-                getString(R.string.play_playlist) to { playQueue(tracksOf(p), 0) },
-                getString(R.string.shuffle_playlist) to { playQueue(tracksOf(p), 0, shuffle = true) },
+                getString(R.string.play_playlist) to { openListId = p.id; playTracks(tracksOf(p), 0, p.id, p.name) },
+                getString(R.string.shuffle_playlist) to { playTracks(tracksOf(p), 0, p.id, p.name, shuffle = true) },
+                getString(R.string.add_songs) to { openListId = p.id; openPicker() },
                 getString(R.string.rename) to {
                     askName(getString(R.string.rename), p.name) { store.rename(p.id, it); render() }
                 },
@@ -572,7 +622,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Escolher (ou criar) a playlist onde acrescentar faixas. */
-    private fun chooseplaylist(trackIds: List<String>) {
+    private fun choosePlaylist(trackIds: List<String>) {
         if (trackIds.isEmpty()) return
         val playlists = store.sorted()
         val names = playlists.map { it.name } + getString(R.string.new_playlist_option)
@@ -595,7 +645,7 @@ class MainActivity : AppCompatActivity() {
         val added = store.add(p.id, trackIds)
         val msg = if (added == 0) getString(R.string.already_in_playlist, p.name)
         else getString(R.string.added_to_playlist, added, p.name)
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        toast(msg)
         render()
     }
 
@@ -689,16 +739,17 @@ class MainActivity : AppCompatActivity() {
         val c = controller ?: return
         for (i in 0 until c.mediaItemCount) {
             if (i == c.currentMediaItemIndex) continue // a faixa atual continua a tocar
-            if (c.getMediaItemAt(i).mediaId != oldPath) continue
-            val t = Track(
-                id = target.absolutePath,
-                uri = Uri.fromFile(target),
-                title = target.nameWithoutExtension,
-                folder = target.parentFile?.name.orEmpty(),
-                durationMs = 0L,
-                dir = target.parent ?: "/"
+            val item = c.getMediaItemAt(i)
+            if (Library.pathOf(item.mediaId) != oldPath) continue
+            val listId = item.mediaMetadata.extras?.getString(Library.EXTRA_LIST)
+            val meta = item.mediaMetadata
+            c.replaceMediaItem(
+                i,
+                Library.mediaItem(
+                    Library.trackFromFile(target), listId, meta.albumTitle?.toString(),
+                    (meta.trackNumber ?: 1) - 1, meta.totalTrackCount ?: c.mediaItemCount
+                )
             )
-            c.replaceMediaItem(i, t.toMediaItem())
         }
     }
 
@@ -706,12 +757,30 @@ class MainActivity : AppCompatActivity() {
 
     // ================================================================ reprodução
 
-    private fun playQueue(tracks: List<Track>, startIndex: Int, shuffle: Boolean = false) {
+    /** Toca a lista aberta (playlist ou favoritos), começando na faixa [index] das visíveis. */
+    private fun playCurrentList(index: Int, shuffle: Boolean = false) {
+        val id = openListId ?: return
+        val name = Library.listName(this, id)
+        val tracks = if (id == Library.FAV_ID) favoriteTracks() else store.get(id)?.let { tracksOf(it) }.orEmpty()
+        // Índice da faixa tocada dentro da lista completa
+        val chosen = visibleTracks.getOrNull(index)
+        val start = chosen?.let { c -> tracks.indexOfFirst { it.id == c.id } }?.takeIf { it >= 0 } ?: 0
+        playTracks(tracks, start, id, name, shuffle)
+    }
+
+    private fun playTracks(
+        tracks: List<Track>,
+        startIndex: Int,
+        listId: String?,
+        listName: String?,
+        shuffle: Boolean = false
+    ) {
         val c = controller ?: return
         if (tracks.isEmpty()) return
         c.shuffleModeEnabled = shuffle
         val start = if (shuffle) tracks.indices.random() else startIndex.coerceIn(tracks.indices)
-        c.setMediaItems(tracks.map { it.toMediaItem() }, start, 0L)
+        val items = tracks.mapIndexed { i, t -> Library.mediaItem(t, listId, listName, i, tracks.size) }
+        c.setMediaItems(items, start, 0L)
         c.prepare()
         c.play()
     }
@@ -719,7 +788,7 @@ class MainActivity : AppCompatActivity() {
     private fun togglePlay() {
         val c = controller ?: return
         if (c.mediaItemCount == 0) {
-            if (visibleTracks.isNotEmpty()) playQueue(visibleTracks, 0)
+            if (screen == Screen.LIST) playCurrentList(0)
             return
         }
         if (c.isPlaying) {
@@ -731,28 +800,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun Track.toMediaItem(): MediaItem =
-        MediaItem.Builder()
-            .setMediaId(id)
-            .setUri(uri)
-            .setRequestMetadata(
-                MediaItem.RequestMetadata.Builder().setMediaUri(uri).build()
-            )
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title)
-                    .setDisplayTitle(title)
-                    .setArtist(folder.ifBlank { null })
-                    .build()
-            )
-            .build()
-
     // ================================================================ painel do leitor
 
     private fun updatePlayerUi() {
         val c = controller ?: return
         val item = c.currentMediaItem
-        nowPlaying.text = item?.mediaMetadata?.title ?: getString(R.string.nothing_playing)
+        val meta = item?.mediaMetadata
+        val songTitle = meta?.title
+        val listTitle = meta?.albumTitle
+        nowPlaying.text = when {
+            songTitle == null -> getString(R.string.nothing_playing)
+            listTitle.isNullOrBlank() -> songTitle
+            else -> "$songTitle  ·  $listTitle"
+        }
 
         btnPlay.setImageResource(if (c.isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
         btnPlay.contentDescription = getString(if (c.isPlaying) R.string.pause else R.string.play)
@@ -770,7 +830,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        adapter.setCurrent(item?.mediaId)
+        adapter.setCurrent(item?.mediaId?.let { Library.pathOf(it) })
         updateProgress()
     }
 
@@ -787,14 +847,10 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val MENU_REFRESH = 1
-        private const val ACT_PLAY_FOLDER = 1
-        private const val ACT_SHUFFLE_FOLDER = 2
-        private const val ACT_NEW_PLAYLIST = 3
-        private const val ACT_PLAY_PLAYLIST = 4
-        private const val ACT_SHUFFLE_PLAYLIST = 5
-        private const val ACT_FULL_ACCESS = 6
-        private const val ACT_FAVORITES = 7
-        private const val ACT_PLAY_FAVS = 8
-        private const val ACT_SHUFFLE_FAVS = 9
+        private const val ACT_FAVORITES = 1
+        private const val ACT_PLAY_LIST = 2
+        private const val ACT_SHUFFLE_LIST = 3
+        private const val ACT_FULL_ACCESS = 4
+        private const val ACT_ADD_FOLDER = 5
     }
 }

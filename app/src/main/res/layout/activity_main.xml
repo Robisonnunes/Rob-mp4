@@ -1,14 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/tabs"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="?attr/colorSurface" />
 
     <LinearLayout
         android:id="@+id/navBar"
@@ -17,7 +13,7 @@
         android:background="?attr/colorSurfaceVariant"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:visibility="gone">
+        android:paddingLeft="4dp">
 
         <ImageButton
             android:id="@+id/navBack"
@@ -34,6 +30,7 @@
             android:layout_weight="1"
             android:ellipsize="start"
             android:maxLines="1"
+            android:paddingLeft="12dp"
             android:paddingRight="16dp"
             android:textAppearance="?attr/textAppearanceTitleMedium" />
     </LinearLayout>
@@ -58,7 +55,9 @@
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/trackList"
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingBottom="88dp" />
 
         <TextView
             android:id="@+id/emptyView"
@@ -69,6 +68,15 @@
             android:padding="32dp"
             android:textAppearance="?attr/textAppearanceBodyMedium"
             android:visibility="gone" />
+
+        <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+            android:id="@+id/fab"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp"
+            android:text="@string/new_playlist"
+            app:icon="@drawable/ic_add_dark" />
     </FrameLayout>
 
     <!-- Painel do leitor -->
