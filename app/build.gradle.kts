@@ -11,8 +11,8 @@ android {
         applicationId = "com.robison.leitormp4"
         minSdk = 24          // Android 7.0 ou superior
         targetSdk = 34
-        versionCode = 8
-        versionName = "2.1"
+        versionCode = 9
+        versionName = "2.2"
     }
 
     // Chave fixa: todas as versões têm a mesma assinatura, por isso

@@ -17,6 +17,15 @@ App Android simples para ouvir ficheiros **MP4** (só o áudio) guardados no cel
 - Ignora o vídeo do MP4 para gastar menos bateria
 - Funciona em Android 7.0 ou mais recente
 
+## Músicas do Google Drive
+
+1. Abra uma playlist › **Adicionar músicas** › **☁ Importar do Google Drive**.
+2. No seletor do Android, toque em **☰** e escolha **Drive**. Entre na pasta das músicas, mantenha o dedo numa música para escolher várias (ou use "Selecionar tudo" no menu ⋮) e confirme.
+3. As músicas são descarregadas **uma vez** para a pasta **☁ Google Drive** do app e entram na playlist. Depois tocam **sem internet**.
+4. Para libertar espaço: mantenha o dedo numa música importada › **Apagar do celular** (o original fica no Drive).
+
+> A pasta fica em `Android/media/com.robison.leitormp4/Google Drive`. Atualizar o app por cima não a apaga; desinstalar o app apaga.
+
 ---
 
 ## Como gerar o APK

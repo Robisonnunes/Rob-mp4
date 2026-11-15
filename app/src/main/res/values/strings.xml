@@ -66,4 +66,19 @@
     <string name="unfavorite_folder">★ Pasta favorita (tocar para desmarcar)</string>
     <string name="folder_favorited">Pasta favorita: aparece no início de \"Adicionar músicas\"</string>
     <string name="folder_unfavorited">Pasta removida dos favoritos</string>
+    <string name="drive_import_row">☁ Importar do Google Drive</string>
+    <string name="drive_folder_name">☁ Google Drive (músicas importadas)</string>
+    <string name="drive_hint">Toque em ☰ e escolha Drive. Mantenha o dedo numa música para escolher várias.</string>
+    <string name="drive_no_picker">Não foi possível abrir o seletor de ficheiros.</string>
+    <string name="drive_importing_title">Importar do Google Drive</string>
+    <string name="drive_progress">A descarregar %1$d de %2$d…\n\nMantenha a internet ligada até terminar.</string>
+    <string name="drive_done">%1$d música(s) guardada(s) no celular.</string>
+    <string name="drive_done_playlist">%1$d música(s) guardada(s) no celular; %2$d nova(s) em \"%3$s\".\n\nJá tocam sem internet.</string>
+    <string name="drive_failed">%1$d não foram descarregadas. Verifique a internet e tente outra vez.</string>
+    <string name="drive_unsupported">%1$d não são ficheiros de áudio e foram ignoradas.</string>
+    <string name="drive_delete">Apagar do celular (fica no Drive)</string>
+    <string name="drive_delete_confirm">Apagar \"%1$s\" do celular?</string>
+    <string name="drive_delete_message">A cópia no celular é apagada e sai das playlists. O original continua no Google Drive.</string>
+    <string name="drive_deleted">Apagada do celular</string>
+    <string name="drive_delete_failed">Não foi possível apagar.</string>
 </resources>

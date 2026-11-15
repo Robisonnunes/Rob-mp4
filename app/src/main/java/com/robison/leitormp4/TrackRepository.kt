@@ -59,8 +59,14 @@ object TrackRepository {
             catalog
         }
 
+        // Músicas importadas do Google Drive (pasta do próprio app: sempre legível)
+        val catalogDurations = catalog.associate { it.id to it.durationMs }
+        val imported = DriveImport.localFiles(context).map { f ->
+            Library.trackFromFile(f).copy(durationMs = catalogDurations[f.absolutePath] ?: 0L)
+        }
+
         return LoadResult(
-            tracks.distinctBy { it.id }
+            (tracks + imported).distinctBy { it.id }
                 .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }),
             aliases
         )

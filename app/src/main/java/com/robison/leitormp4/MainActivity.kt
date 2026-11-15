@@ -86,6 +86,12 @@ class MainActivity : AppCompatActivity() {
             offerFullAccessOnce()
         }
 
+    /** Seletor de ficheiros do Android: o Google Drive aparece no menu lateral (☰). */
+    private val driveLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) importFromDrive(uris)
+        }
+
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) = updatePlayerUi()
     }
@@ -275,10 +281,6 @@ class MainActivity : AppCompatActivity() {
     // ================================================================ dados
 
     private fun loadTracks() {
-        if (!hasMediaPermission()) {
-            render()
-            return
-        }
         showEmpty(getString(R.string.loading))
         val full = TrackRepository.hasFullAccess(this)
         io.execute {
@@ -321,8 +323,11 @@ class MainActivity : AppCompatActivity() {
     /** Pasta mostrada no seletor; com um só armazenamento, começa logo nele. */
     private fun effectiveFolder(): String? = pickFolder ?: volumes.singleOrNull()
 
+    private fun driveDir(): String = DriveImport.folder(this).absolutePath
+
     private fun pickerCanGoUpFolder(): Boolean {
         val f = effectiveFolder() ?: return false
+        if (f == driveDir()) return true
         return !(f in volumes && volumes.size == 1)
     }
 
@@ -336,7 +341,7 @@ class MainActivity : AppCompatActivity() {
             Screen.PICKER -> {
                 if (pickerCanGoUpFolder()) {
                     val f = effectiveFolder()!!
-                    pickFolder = if (f in volumes) null else f.substringBeforeLast('/')
+                    pickFolder = if (f in volumes || f == driveDir()) null else f.substringBeforeLast('/')
                 } else {
                     screen = Screen.LIST
                 }
@@ -435,20 +440,29 @@ class MainActivity : AppCompatActivity() {
                 val p = store.get(openListId)!!
                 val f = effectiveFolder()
                 title = getString(R.string.adding_to, p.name) +
-                    (f?.let { "  ›  " + FolderTree.displayName(it) } ?: "")
+                    (f?.let { "  ›  " + if (it == drive) getString(R.string.drive_folder_name) else FolderTree.displayName(it) } ?: "")
                 val atStart = !pickerCanGoUpFolder()
                 if (needsFullAccess() && atStart && q.isEmpty()) {
                     rows += Row.Action(ACT_FULL_ACCESS, getString(R.string.full_access_row), R.drawable.ic_lock_open)
                 }
+                // Google Drive: importar e atalho para a pasta das músicas importadas
+                val drive = driveDir()
+                if ((atStart || f == drive) && q.isEmpty()) {
+                    rows += Row.Action(ACT_DRIVE_IMPORT, getString(R.string.drive_import_row), R.drawable.ic_cloud)
+                }
+                if (atStart && q.isEmpty() && f != drive) {
+                    val n = tracksInFolder(drive).size
+                    if (n > 0) rows += Row.FolderRow(drive, getString(R.string.drive_folder_name), n)
+                }
                 // Atalhos: pastas favoritas no topo do início
                 if (atStart && q.isEmpty()) {
                     favs.folderPaths()
-                        .filter { it != f && allTracks.any { t -> FolderTree.isInside(t.dir, it) } }
+                        .filter { it != f && it != drive && allTracks.any { t -> FolderTree.isInside(t.dir, it) } }
                         .sortedBy { it.substringAfterLast('/').lowercase() }
                         .forEach { rows += Row.FolderRow(it, FolderTree.displayName(it), tracksInFolder(it).size) }
                 }
                 // Marcar / desmarcar a pasta aberta como favorita
-                if (f != null && q.isEmpty() && !(f in volumes)) {
+                if (f != null && q.isEmpty() && !(f in volumes) && f != drive) {
                     rows += if (favs.isFolder(f)) {
                         Row.Action(ACT_TOGGLE_FAV_FOLDER, getString(R.string.unfavorite_folder), R.drawable.ic_star)
                     } else {
@@ -490,8 +504,8 @@ class MainActivity : AppCompatActivity() {
         backCallback.isEnabled = screen != Screen.HOME
 
         val empty = when {
-            !hasMediaPermission() -> getString(R.string.no_permission)
             rows.isNotEmpty() -> null
+            !hasMediaPermission() -> getString(R.string.no_permission)
             q.isNotEmpty() -> getString(R.string.no_results)
             screen == Screen.LIST && openListId == Library.FAV_ID -> getString(R.string.favorites_empty)
             screen == Screen.LIST -> getString(R.string.playlist_empty)
@@ -547,6 +561,7 @@ class MainActivity : AppCompatActivity() {
                 ACT_PLAY_LIST -> playCurrentList(0)
                 ACT_SHUFFLE_LIST -> playCurrentList(0, shuffle = true)
                 ACT_FULL_ACCESS -> openFullAccessSettings()
+                ACT_DRIVE_IMPORT -> startDriveImport()
                 ACT_TOGGLE_FAV_FOLDER -> effectiveFolder()?.let {
                     val now = favs.toggleFolder(it)
                     toast(getString(if (now) R.string.folder_favorited else R.string.folder_unfavorited))
@@ -594,6 +609,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         options += getString(R.string.rename_file) to { renameTrack(track) }
+        if (DriveImport.isInFolder(this, track.id)) {
+            options += getString(R.string.drive_delete) to { deleteImported(track) }
+        }
         showOptions(track.title, options)
     }
 
@@ -711,7 +729,7 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.rename_failed))
             return
         }
-        if (!canWriteFiles()) {
+        if (!canWriteFiles() && !DriveImport.isInFolder(this, track.id)) {
             if (Build.VERSION.SDK_INT >= 30) {
                 AlertDialog.Builder(this)
                     .setTitle(R.string.full_access_title)
@@ -765,6 +783,88 @@ class MainActivity : AppCompatActivity() {
                 )
             )
         }
+    }
+
+    // ================================================================ Google Drive
+
+    private fun startDriveImport() {
+        val target = openListId ?: return
+        getSharedPreferences("app", MODE_PRIVATE).edit().putString("import_target", target).apply()
+        try {
+            driveLauncher.launch(DriveImport.MIME_TYPES)
+            toast(getString(R.string.drive_hint))
+        } catch (_: Exception) {
+            toast(getString(R.string.drive_no_picker))
+        }
+    }
+
+    private fun importFromDrive(uris: List<Uri>) {
+        val targetId = getSharedPreferences("app", MODE_PRIVATE).getString("import_target", null)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.drive_importing_title)
+            .setMessage(getString(R.string.drive_progress, 1, uris.size))
+            .setCancelable(false)
+            .show()
+        val app = applicationContext
+        io.execute {
+            val files = mutableListOf<File>()
+            var failed = 0
+            var unsupported = 0
+            uris.forEachIndexed { i, uri ->
+                runOnUiThread {
+                    if (dialog.isShowing) dialog.setMessage(getString(R.string.drive_progress, i + 1, uris.size))
+                }
+                when (val r = DriveImport.copy(app, uri)) {
+                    is DriveImport.Result.Copied -> files += r.file
+                    is DriveImport.Result.AlreadyThere -> files += r.file
+                    DriveImport.Result.Unsupported -> unsupported++
+                    DriveImport.Result.Failed -> failed++
+                }
+            }
+            if (files.isNotEmpty()) {
+                MediaScannerConnection.scanFile(app, files.map { it.absolutePath }.toTypedArray(), null, null)
+            }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (dialog.isShowing) dialog.dismiss()
+                val p = store.get(targetId)
+                val added = if (p != null) store.add(p.id, files.map { it.absolutePath }) else 0
+                val msg = StringBuilder()
+                msg.append(
+                    if (p != null) getString(R.string.drive_done_playlist, files.size, added, p.name)
+                    else getString(R.string.drive_done, files.size)
+                )
+                if (failed > 0) msg.append("\n\n").append(getString(R.string.drive_failed, failed))
+                if (unsupported > 0) msg.append("\n\n").append(getString(R.string.drive_unsupported, unsupported))
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.drive_importing_title)
+                    .setMessage(msg.toString())
+                    .setPositiveButton(R.string.ok, null)
+                    .show()
+                loadTracks()
+            }
+        }
+    }
+
+    private fun deleteImported(track: Track) {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.drive_delete_confirm, track.title))
+            .setMessage(R.string.drive_delete_message)
+            .setPositiveButton(R.string.delete) { _, _ ->
+                val f = File(track.id)
+                if (f.delete()) {
+                    for (p in store.playlists.toList()) {
+                        if (track.id in p.items) store.remove(p.id, track.id)
+                    }
+                    MediaScannerConnection.scanFile(this, arrayOf(track.id), null, null)
+                    toast(getString(R.string.drive_deleted))
+                    loadTracks()
+                } else {
+                    toast(getString(R.string.drive_delete_failed))
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
@@ -867,5 +967,6 @@ class MainActivity : AppCompatActivity() {
         private const val ACT_FULL_ACCESS = 4
         private const val ACT_ADD_FOLDER = 5
         private const val ACT_TOGGLE_FAV_FOLDER = 6
+        private const val ACT_DRIVE_IMPORT = 7
     }
 }
