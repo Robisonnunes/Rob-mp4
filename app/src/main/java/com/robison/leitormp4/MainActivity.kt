@@ -440,7 +440,7 @@ class MainActivity : AppCompatActivity() {
                 val p = store.get(openListId)!!
                 val f = effectiveFolder()
                 title = getString(R.string.adding_to, p.name) +
-                    (f?.let { "  ›  " + if (it == drive) getString(R.string.drive_folder_name) else FolderTree.displayName(it) } ?: "")
+                    (f?.let { "  ›  " + if (it == driveDir()) getString(R.string.drive_folder_name) else FolderTree.displayName(it) } ?: "")
                 val atStart = !pickerCanGoUpFolder()
                 if (needsFullAccess() && atStart && q.isEmpty()) {
                     rows += Row.Action(ACT_FULL_ACCESS, getString(R.string.full_access_row), R.drawable.ic_lock_open)
